@@ -4,86 +4,278 @@ import { supabaseAdmin } from "@/lib/supabase";
 /**
  * POST /api/sms/incoming
  * Twilio webhook — receives inbound SMS from customers.
- * Logs the message and forwards to n8n for AI processing.
- *
- * Twilio sends form-encoded: From, To, Body, MessageSid, etc.
+ * Full processing loop:
+ * 1. Look up customer in Supabase by phone
+ * 2. Find active work order
+ * 3. Get available slots
+ * 4. Send context to Claude Haiku for intent classification
+ * 5. Take action (book, reply info, etc.)
+ * 6. Send reply SMS via Twilio
  */
+
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
+
 export async function POST(request: NextRequest) {
   try {
-    // Twilio sends form-encoded data
     const formData = await request.formData();
     const from = formData.get("From")?.toString() || "";
-    const to = formData.get("To")?.toString() || "";
     const body = formData.get("Body")?.toString() || "";
     const messageSid = formData.get("MessageSid")?.toString() || "";
 
-    console.log(`[Incoming SMS] From: ${from}, Body: "${body}"`);
+    console.log(`[SMS] From: ${from}, Body: "${body}"`);
 
     const sb = supabaseAdmin();
 
-    // Normalize phone to find customer
+    // Normalize phone
     const fromDigits = from.replace(/\D/g, "");
     const searchDigits = fromDigits.length === 11 && fromDigits.startsWith("1")
       ? fromDigits.slice(1)
       : fromDigits;
 
-    // Try to find the customer by phone
-    const { data: customers } = await sb
-      .from("customers")
-      .select("id, tenant_id, customer_name, phone")
-      .or(`phone.ilike.%${searchDigits.slice(-7)}%`)
-      .limit(1);
+    // 1. Customer lookup in Supabase
+    const lookupRes = await fetch(`${APP_URL}/api/vapi/customer-lookup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: searchDigits }),
+    });
+    const customerData = await lookupRes.json();
 
-    const customer = customers?.[0];
-    const tenantId = customer?.tenant_id || 1;
+    // 2. Get available slots if there's an active WO
+    let slotsData: any = null;
+    if (customerData.found && customerData.active_wo?.wo_number) {
+      const slotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ work_order_number: customerData.active_wo.wo_number }),
+      });
+      slotsData = await slotsRes.json();
+    }
 
-    // Log the inbound SMS
+    // 3. Build Claude prompt and get intent
+    const aiResult = await classifyIntent(body, customerData, slotsData);
+
+    // 4. Take action
+    let replyText = aiResult.reply;
+
+    if (aiResult.action === "book" && aiResult.chosen_date && customerData.active_wo) {
+      // Verify date is available
+      const availDates = slotsData?.available_dates || [];
+      if (availDates.includes(aiResult.chosen_date)) {
+        const bookRes = await fetch(`${APP_URL}/api/vapi/book-appointment`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            work_order_number: customerData.active_wo.wo_number,
+            chosen_date: aiResult.chosen_date,
+            tech_id: aiResult.tech_id || slotsData?.tech_id || "",
+          }),
+        });
+        const bookData = await bookRes.json();
+        if (!bookData.success) {
+          replyText = `Sorry, that date is not available. ${slotsData?.agent_summary || "Please call (855) 269-3196."}`;
+        }
+      } else {
+        // Date not in available list — override with info
+        const first3 = availDates.slice(0, 3);
+        const fmtDates = first3.map((d: string) => {
+          const dt = new Date(d + "T12:00:00");
+          const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+          return `${months[dt.getMonth()]} ${dt.getDate()}`;
+        }).join(", ");
+        replyText = `Sorry, that date is not available. We have openings on ${fmtDates}. Which day works for you?`;
+      }
+    }
+
+    // 5. Send reply SMS via Twilio
+    const tenantId = customerData.found ? customerData.customer_id : 1;
+    const { data: integration } = await sb
+      .from("tenant_integrations")
+      .select("encrypted_keys")
+      .eq("tenant_id", 1)
+      .eq("integration_type", "twilio")
+      .eq("is_configured", true)
+      .single();
+
+    if (integration && replyText) {
+      const creds = integration.encrypted_keys as any;
+      const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Messages.json`;
+      const basicAuth = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString("base64");
+
+      await fetch(twilioUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          From: creds.phoneNumber,
+          To: from,
+          Body: replyText,
+        }),
+      });
+
+      // Log outbound
+      await sb.from("sms_logs").insert({
+        tenant_id: 1,
+        recipient_phone: from,
+        message_type: `reply_${aiResult.action}`,
+        status: "sent",
+        error_message: JSON.stringify({ action: aiResult.action, reply_preview: replyText.substring(0, 100) }),
+      });
+    }
+
+    // Log inbound
     await sb.from("sms_logs").insert({
-      tenant_id: tenantId,
+      tenant_id: 1,
       recipient_phone: from,
       message_type: "inbound",
       status: "received",
       twilio_message_id: messageSid,
-      error_message: JSON.stringify({
-        from,
-        to,
-        body,
-        customer_id: customer?.id || null,
-        customer_name: customer?.customer_name || null,
-      }),
+      error_message: JSON.stringify({ body, customer: customerData.customer_name, action: aiResult.action }),
     });
 
-    // Forward to n8n for AI processing
-    const n8nUrl = process.env.N8N_BASE_URL || "https://n8n-production-57dc.up.railway.app";
-    try {
-      const n8nRes = await fetch(`${n8nUrl}/webhook/fa-incoming-sms`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          From: from,
-          To: to,
-          Body: body,
-          MessageSid: messageSid,
-        }),
-      });
-      console.log(`[Incoming SMS] Forwarded to n8n: ${n8nRes.status}`);
-    } catch (n8nErr) {
-      console.error("[Incoming SMS] n8n forward failed:", n8nErr);
-    }
-
-    // Return TwiML empty response (don't auto-reply — n8n handles the response)
-    return new NextResponse(
-      `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
-      {
-        status: 200,
-        headers: { "Content-Type": "text/xml" },
-      }
-    );
-  } catch (error) {
-    console.error("Incoming SMS error:", error);
+    // Return empty TwiML (we send reply via API, not TwiML)
     return new NextResponse(
       `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
       { status: 200, headers: { "Content-Type": "text/xml" } }
     );
+  } catch (error) {
+    console.error("[SMS] Error:", error);
+    return new NextResponse(
+      `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
+      { status: 200, headers: { "Content-Type": "text/xml" } }
+    );
+  }
+}
+
+async function classifyIntent(
+  smsBody: string,
+  customer: any,
+  slots: any
+): Promise<{ action: string; reply: string; chosen_date?: string; tech_id?: string }> {
+  if (!ANTHROPIC_API_KEY) {
+    return { action: "unclear", reply: "Thanks for reaching out! Please call us at (855) 269-3196." };
+  }
+
+  if (!customer.found) {
+    return {
+      action: "unknown_customer",
+      reply: "Hi, thanks for texting Fleming Appliance Repair! We could not find your account. Please call us at (855) 269-3196 so we can assist you.",
+    };
+  }
+
+  const wo = customer.active_wo || {};
+  const today = new Date().toISOString().split("T")[0];
+  const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  const todayName = dayNames[new Date().getDay()];
+
+  const prompt = `You are a friendly SMS assistant for Fleming Appliance Repair. Return ONLY valid JSON. No markdown, no backticks.
+
+Today: ${today} (${todayName})
+
+CUSTOMER MESSAGE: "${smsBody}"
+CUSTOMER NAME: ${customer.customer_name}
+CUSTOMER ADDRESS: ${customer.address}
+
+WORK ORDER INFO:
+- Work Order: ${wo.wo_number || "none"}
+- Job Type: ${wo.job_type || ""}
+- Appliances: ${wo.appliance_type || ""}
+- Status: ${wo.status || "none"}
+- Assigned Tech: ${wo.tech_name || ""}
+
+SCHEDULING DATA:
+- Tech: ${slots?.tech_name || ""}
+- Time Window: ${slots?.window_start || ""} to ${slots?.window_end || ""}
+- Available Dates: ${(slots?.available_dates || []).join(", ")}
+- Agent Summary: ${slots?.agent_summary || ""}
+
+RULES:
+- Status "ready_to_schedule" means "Parts Have Arrived" — tell customer their parts are in and offer to schedule
+- Status "scheduled" means they already have an appointment — tell them their appointment details first
+- Status "draft" or "New" means new work order — offer to schedule
+- The time window is FIXED based on ZIP code and CANNOT be changed
+- Keep SMS replies to 2-3 sentences max
+- Do NOT use contractions
+- When listing dates, list only the first 3 then say "We have more dates available after that as well."
+- NEVER return "book" for a date not in the Available Dates list
+- Always include the customer's name and appliance type
+
+ACTIONS — classify the message into one of these and return JSON:
+
+1. "book" — Customer chose a date. Return: {"action": "book", "chosen_date": "YYYY-MM-DD", "tech_id": "${slots?.tech_id || ""}", "reply": "confirmation message"}
+2. "info" — Asking about availability or scheduling. Return: {"action": "info", "reply": "message with dates"}
+3. "status" — Asking about their appointment. Return: {"action": "status", "reply": "appointment details"}
+4. "callback" — Same issue after repair. Return: {"action": "callback", "reply": "instruct to contact warranty company for recall"}
+5. "escalate" — Wants a human. Return: {"action": "escalate", "reply": "we will have someone reach out"}
+6. "cancel" — Wants to cancel. Return: {"action": "cancel", "reply": "cancellation confirmed"}
+7. "optout" — STOP. Return: {"action": "optout", "reply": "No problem! Text us back or call (855) 269-3196."}
+8. "unclear" — Cannot determine. Return: {"action": "unclear", "reply": "friendly prompt to clarify"}
+
+Return ONLY valid JSON.`;
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 500,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    const data = await res.json();
+    const rawText = data.content?.[0]?.text || "";
+
+    // Extract JSON from response
+    const jsonStart = rawText.indexOf("{");
+    if (jsonStart === -1) {
+      return { action: "unclear", reply: "Thanks for reaching out! Please call us at (855) 269-3196." };
+    }
+
+    let depth = 0;
+    let jsonEnd = jsonStart;
+    for (let i = jsonStart; i < rawText.length; i++) {
+      if (rawText[i] === "{") depth++;
+      else if (rawText[i] === "}") {
+        depth--;
+        if (depth === 0) { jsonEnd = i + 1; break; }
+      }
+    }
+
+    const parsed = JSON.parse(rawText.slice(jsonStart, jsonEnd));
+
+    // Server-side guard: reject book action for unavailable dates
+    if (parsed.action === "book" && parsed.chosen_date) {
+      const availDates = slots?.available_dates || [];
+      if (!availDates.includes(parsed.chosen_date)) {
+        const first3 = availDates.slice(0, 3);
+        const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+        const dateStr = first3.map((d: string) => {
+          const dt = new Date(d + "T12:00:00");
+          return `${months[dt.getMonth()]} ${dt.getDate()}`;
+        }).join(", ");
+        return {
+          action: "info",
+          reply: `Sorry, that date is not available. We have openings on ${dateStr}. We have more dates available after that as well. Which day works for you?`,
+        };
+      }
+    }
+
+    return {
+      action: parsed.action || "unclear",
+      reply: parsed.reply || "Thanks for reaching out! Please call us at (855) 269-3196.",
+      chosen_date: parsed.chosen_date,
+      tech_id: parsed.tech_id,
+    };
+  } catch (err) {
+    console.error("[SMS] Claude API error:", err);
+    return { action: "unclear", reply: "We are having trouble right now. Please call us at (855) 269-3196." };
   }
 }
