@@ -35,11 +35,46 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [tenantUser, setTenantUser] = useState<TenantUser | null>(null);
+  // Initialize from localStorage cache for instant page loads
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const cached = localStorage.getItem("fb_user");
+      return cached ? JSON.parse(cached) : null;
+    } catch { return null; }
+  });
+  const [tenantUser, setTenantUser] = useState<TenantUser | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const cached = localStorage.getItem("fb_tenant_user");
+      return cached ? JSON.parse(cached) : null;
+    } catch { return null; }
+  });
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    // If we have cached data, don't show loading
+    if (typeof window === "undefined") return true;
+    return !localStorage.getItem("fb_user");
+  });
   const [error, setError] = useState<string | null>(null);
+
+  const updateUser = useCallback((u: User | null) => {
+    setUser(u);
+    if (u) {
+      localStorage.setItem("fb_user", JSON.stringify(u));
+    } else {
+      localStorage.removeItem("fb_user");
+    }
+  }, []);
+
+  const updateTenantUser = useCallback((tu: TenantUser | null) => {
+    setTenantUser(tu);
+    if (tu) {
+      localStorage.setItem("fb_tenant_user", JSON.stringify(tu));
+    } else {
+      localStorage.removeItem("fb_tenant_user");
+    }
+  }, []);
 
   const fetchTenantUser = useCallback(async (userId: string) => {
     try {
@@ -48,17 +83,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         .select("*")
         .eq("auth_uid", userId)
         .single();
-      if (data) setTenantUser(data as TenantUser);
+      if (data) updateTenantUser(data as TenantUser);
     } catch {
       // Silent fail — tenant user may not exist yet (onboarding)
     }
-  }, []);
+  }, [updateTenantUser]);
 
   const clearAuth = useCallback(() => {
-    setUser(null);
+    updateUser(null);
     setSession(null);
-    setTenantUser(null);
-  }, []);
+    updateTenantUser(null);
+    // Clear all Supabase keys
+    Object.keys(localStorage).forEach((key) => {
+      if (key.startsWith("sb-") || key.includes("supabase") || key.startsWith("fb_")) {
+        localStorage.removeItem(key);
+      }
+    });
+  }, [updateUser, updateTenantUser]);
 
   useEffect(() => {
     let mounted = true;
@@ -101,7 +142,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         }
 
         setSession(currentSession);
-        setUser(currentSession.user);
+        updateUser(currentSession.user);
         await fetchTenantUser(currentSession.user.id);
       } catch {
         clearAuth();
@@ -129,7 +170,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
         if (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") {
           setSession(newSession);
-          setUser(newSession.user);
+          updateUser(newSession.user);
           await fetchTenantUser(newSession.user.id);
         }
       }
