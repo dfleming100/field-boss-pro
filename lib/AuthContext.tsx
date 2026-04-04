@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
@@ -13,7 +13,6 @@ interface TenantUser {
   is_active: boolean;
   created_at: string;
   updated_at: string;
-  // Convenience aliases
   first_name?: string | null;
   last_name?: string | null;
   email?: string;
@@ -42,73 +41,105 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const fetchTenantUser = useCallback(async (userId: string) => {
+    try {
+      const { data } = await supabase
+        .from("tenant_users")
+        .select("*")
+        .eq("auth_uid", userId)
+        .single();
+      if (data) setTenantUser(data as TenantUser);
+    } catch {
+      // Silent fail — tenant user may not exist yet (onboarding)
+    }
+  }, []);
+
+  const clearAuth = useCallback(() => {
+    setUser(null);
+    setSession(null);
+    setTenantUser(null);
+  }, []);
+
   useEffect(() => {
-    // Force loading=false after 3 seconds no matter what
-    const timeout = setTimeout(() => {
-      setLoading(false);
-    }, 3000);
+    let mounted = true;
 
-    const getSession = async () => {
+    const init = async () => {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
 
-        setSession(session);
-        setUser(session?.user || null);
+        if (!mounted) return;
 
-        if (session?.user) {
-          const { data } = await supabase
-            .from("tenant_users")
-            .select("*")
-            .eq("auth_uid", session.user.id)
-            .single();
-
-          if (data) {
-            setTenantUser(data as TenantUser);
-          }
+        if (sessionError || !currentSession) {
+          clearAuth();
+          setLoading(false);
+          return;
         }
-      } catch (err) {
-        console.error("Auth error:", err);
+
+        // Check if token is expired
+        const expiresAt = currentSession.expires_at;
+        if (expiresAt && expiresAt * 1000 < Date.now()) {
+          // Session expired — try to refresh
+          const { data: { session: refreshed }, error: refreshError } = await supabase.auth.refreshSession();
+          if (!mounted) return;
+
+          if (refreshError || !refreshed) {
+            // Can't refresh — clear everything
+            await supabase.auth.signOut();
+            clearAuth();
+            setLoading(false);
+            return;
+          }
+
+          setSession(refreshed);
+          setUser(refreshed.user);
+          await fetchTenantUser(refreshed.user.id);
+        } else {
+          setSession(currentSession);
+          setUser(currentSession.user);
+          await fetchTenantUser(currentSession.user.id);
+        }
+      } catch {
+        clearAuth();
       } finally {
-        clearTimeout(timeout);
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
-    getSession();
+    // Don't wait forever — 3 second max
+    const timeout = setTimeout(() => {
+      if (mounted) setLoading(false);
+    }, 3000);
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setSession(session);
-      setUser(session?.user || null);
+    init().then(() => clearTimeout(timeout));
 
-      if (session?.user) {
-        const { data } = await supabase
-          .from("tenant_users")
-          .select("*")
-          .eq("auth_uid", session.user.id)
-          .single();
+    // Listen for auth changes (login, logout, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, newSession) => {
+        if (!mounted) return;
 
-        if (data) {
-          setTenantUser(data as TenantUser);
+        if (event === "SIGNED_OUT" || !newSession) {
+          clearAuth();
+          return;
         }
-      } else {
-        setTenantUser(null);
-      }
-    });
 
-    return () => subscription?.unsubscribe();
-  }, []);
+        if (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") {
+          setSession(newSession);
+          setUser(newSession.user);
+          await fetchTenantUser(newSession.user.id);
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      subscription?.unsubscribe();
+    };
+  }, [fetchTenantUser, clearAuth]);
 
   const signUp = async (email: string, password: string) => {
     try {
       setError(null);
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
+      const { error } = await supabase.auth.signUp({ email, password });
       if (error) throw error;
     } catch (err) {
       setError((err as Error).message);
@@ -119,14 +150,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const signIn = async (email: string, password: string) => {
     try {
       setError(null);
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      // The onAuthStateChange listener in useEffect handles updating
-      // session, user, and tenantUser state automatically.
-      // The session cookie is set by @supabase/ssr so middleware can read it.
     } catch (err) {
       setError((err as Error).message);
       throw err;
@@ -136,28 +161,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const signOut = async () => {
     try {
       setError(null);
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      setUser(null);
-      setTenantUser(null);
+      await supabase.auth.signOut();
+      clearAuth();
     } catch (err) {
+      // Force clear even if signOut API fails
+      clearAuth();
       setError((err as Error).message);
-      throw err;
     }
   };
 
   return (
     <AuthContext.Provider
-      value={{
-        user,
-        tenantUser,
-        session,
-        loading,
-        error,
-        signUp,
-        signIn,
-        signOut,
-      }}
+      value={{ user, tenantUser, session, loading, error, signUp, signIn, signOut }}
     >
       {children}
     </AuthContext.Provider>
