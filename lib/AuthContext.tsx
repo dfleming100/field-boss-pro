@@ -43,36 +43,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Force loading=false after 3 seconds no matter what
+    const timeout = setTimeout(() => {
+      setLoading(false);
+    }, 3000);
+
     const getSession = async () => {
       try {
-        console.log("[Auth] getSession starting...");
         const {
           data: { session },
-          error: sessionError,
         } = await supabase.auth.getSession();
-        console.log("[Auth] getSession done:", session ? "has session" : "no session", sessionError || "");
 
         setSession(session);
         setUser(session?.user || null);
 
         if (session?.user) {
-          console.log("[Auth] Fetching tenant user for:", session.user.id);
-          const { data, error: fetchError } = await supabase
+          const { data } = await supabase
             .from("tenant_users")
             .select("*")
             .eq("auth_uid", session.user.id)
             .single();
-
-          console.log("[Auth] Tenant user result:", data ? "found" : "not found", fetchError?.message || "");
 
           if (data) {
             setTenantUser(data as TenantUser);
           }
         }
       } catch (err) {
-        console.error("[Auth] Error in getSession:", err);
+        console.error("Auth error:", err);
       } finally {
-        console.log("[Auth] Setting loading=false");
+        clearTimeout(timeout);
         setLoading(false);
       }
     };
