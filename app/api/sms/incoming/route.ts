@@ -41,9 +41,10 @@ export async function POST(request: NextRequest) {
     });
     const customerData = await lookupRes.json();
 
-    // 2. Get available slots if there's an active WO
+    // 2. Get available slots ONLY if WO needs scheduling (not already Scheduled)
     let slotsData: any = null;
-    if (customerData.found && customerData.active_wo?.wo_number) {
+    const woStatus = customerData.active_wo?.status || "";
+    if (customerData.found && customerData.active_wo?.wo_number && woStatus !== "Scheduled") {
       const slotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -57,6 +58,21 @@ export async function POST(request: NextRequest) {
 
     // 4. Take action
     let replyText = aiResult.reply;
+
+    // If reschedule requested but we didn't fetch slots yet (status was Scheduled), fetch them now
+    if ((aiResult.action === "reschedule" || aiResult.action === "book") && !slotsData && customerData.active_wo?.wo_number) {
+      const slotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ work_order_number: customerData.active_wo.wo_number }),
+      });
+      slotsData = await slotsRes.json();
+
+      // If reschedule action, offer the dates
+      if (aiResult.action === "reschedule" && slotsData?.agent_summary) {
+        replyText = `No problem! ${slotsData.agent_summary}`;
+      }
+    }
 
     if (aiResult.action === "book" && aiResult.chosen_date && customerData.active_wo) {
       // Verify date is available
@@ -184,36 +200,46 @@ WORK ORDER INFO:
 - Appliances: ${wo.appliance_type || ""}
 - Status: ${wo.status || "none"}
 - Assigned Tech: ${wo.tech_name || ""}
+${customer.appointment ? `
+EXISTING APPOINTMENT:
+- Date: ${customer.appointment.date_display || customer.appointment.date || ""}
+- Window: ${customer.appointment.window_start || ""} to ${customer.appointment.window_end || ""}
+` : ""}
+${slots ? `SCHEDULING DATA:
+- Tech: ${slots.tech_name || ""}
+- Time Window: ${slots.window_start || ""} to ${slots.window_end || ""}
+- Available Dates: ${(slots.available_dates || []).join(", ")}
+- Agent Summary: ${slots.agent_summary || ""}
+` : ""}
+CRITICAL RULE — STATUS-AWARE FIRST RESPONSE:
+Your FIRST response to any greeting ("hi", "hello", "hey", etc.) or vague message MUST acknowledge the customer's current situation:
 
-SCHEDULING DATA:
-- Tech: ${slots?.tech_name || ""}
-- Time Window: ${slots?.window_start || ""} to ${slots?.window_end || ""}
-- Available Dates: ${(slots?.available_dates || []).join(", ")}
-- Agent Summary: ${slots?.agent_summary || ""}
+- If Status is "Scheduled": FIRST tell them their existing appointment. Say "Hi [name], we have your [appliance] [job type] scheduled for [date] between [window]. How can I help you?" Do NOT offer new dates unless they ask to reschedule.
+- If Status is "Parts Have Arrived": Say "Hi [name], your parts have arrived for your [appliance] service at [address]! Would you like to schedule your appointment?" Then offer dates only if they say yes.
+- If Status is "Parts Ordered": Say "Hi [name], parts for your [appliance] at [address] have been ordered. We will reach out when they arrive to schedule."
+- If Status is "New": Say "Hi [name], we have your [appliance] service at [address]. Would you like to schedule?" Then offer dates if they say yes.
+- If Status is "Complete": Say "Hi [name], your [appliance] service is complete. How can I help you?"
 
 RULES:
-- Status "Parts Have Arrived" means parts are in — tell customer their parts are in and offer to schedule
-- Status "Parts Ordered" means parts are on the way — tell customer parts have been ordered and we will contact them when they arrive
-- Status "Scheduled" means they already have an appointment — tell them their appointment details first
-- Status "New" means new work order — offer to schedule
-- Status "Complete" means work is finished — no scheduling needed
 - The time window is FIXED based on ZIP code and CANNOT be changed
 - Keep SMS replies to 2-3 sentences max
 - Do NOT use contractions
+- Do NOT assume intent from greetings — always acknowledge their current status first and ask how you can help
 - When listing dates, list only the first 3 then say "We have more dates available after that as well."
 - NEVER return "book" for a date not in the Available Dates list
 - Always include the customer's name and appliance type
 
 ACTIONS — classify the message into one of these and return JSON:
 
-1. "book" — Customer chose a date. Return: {"action": "book", "chosen_date": "YYYY-MM-DD", "tech_id": "${slots?.tech_id || ""}", "reply": "confirmation message"}
-2. "info" — Asking about availability or scheduling. Return: {"action": "info", "reply": "message with dates"}
-3. "status" — Asking about their appointment. Return: {"action": "status", "reply": "appointment details"}
-4. "callback" — Same issue after repair. Return: {"action": "callback", "reply": "instruct to contact warranty company for recall"}
-5. "escalate" — Wants a human. Return: {"action": "escalate", "reply": "we will have someone reach out"}
-6. "cancel" — Wants to cancel. Return: {"action": "cancel", "reply": "cancellation confirmed"}
-7. "optout" — STOP. Return: {"action": "optout", "reply": "No problem! Text us back or call (855) 269-3196."}
-8. "unclear" — Cannot determine. Return: {"action": "unclear", "reply": "friendly prompt to clarify"}
+1. "book" — Customer explicitly chose a specific date (e.g. "Tuesday", "the 8th", "April 10"). Return: {"action": "book", "chosen_date": "YYYY-MM-DD", "tech_id": "${slots?.tech_id || ""}", "reply": "confirmation message"}. ONLY use this when they clearly state a date.
+2. "info" — Asking about availability, scheduling, or any general question. Also use for greetings like "hi", "hello", "hey". Return: {"action": "info", "reply": "status-aware greeting or helpful response"}
+3. "reschedule" — Explicitly says they want to reschedule (e.g. "I need to reschedule", "can I change my appointment"). Return: {"action": "reschedule", "reply": "offer available dates"}
+4. "status" — Asking specifically about their appointment or tech ETA. Return: {"action": "status", "reply": "appointment details"}
+5. "callback" — Same issue after repair. Return: {"action": "callback", "reply": "instruct to contact warranty company for recall"}
+6. "escalate" — Wants a human. Return: {"action": "escalate", "reply": "we will have someone reach out"}
+7. "cancel" — Wants to cancel. Return: {"action": "cancel", "reply": "cancellation confirmed"}
+8. "optout" — STOP. Return: {"action": "optout", "reply": "No problem! Text us back or call (855) 269-3196."}
+9. "unclear" — Cannot determine intent AND no status context to fall back on. Return: {"action": "unclear", "reply": "friendly prompt to clarify"}
 
 Return ONLY valid JSON.`;
 
