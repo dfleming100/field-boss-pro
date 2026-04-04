@@ -12,12 +12,8 @@
       "schedule": "0 14 * * *"
     },
     {
-      "path": "/api/cron/daily-outreach",
-      "schedule": "0 20 * * *"
-    },
-    {
       "path": "/api/cron/review-request",
-      "schedule": "0 * * * *"
+      "schedule": "0 18 * * *"
     }
   ]
 }
