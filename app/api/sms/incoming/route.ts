@@ -33,6 +33,29 @@ export async function POST(request: NextRequest) {
       ? fromDigits.slice(1)
       : fromDigits;
 
+    // Store inbound message in conversation history
+    await sb.from("sms_conversations").insert({
+      tenant_id: 1,
+      phone: from,
+      direction: "inbound",
+      body,
+      message_sid: messageSid,
+    });
+
+    // Fetch recent conversation history (last 10 messages)
+    const { data: convHistory } = await sb
+      .from("sms_conversations")
+      .select("direction, body, created_at")
+      .eq("phone", from)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    // Build conversation thread (oldest first)
+    const conversationThread = (convHistory || [])
+      .reverse()
+      .map((msg: any) => `${msg.direction === "inbound" ? "Customer" : "Fleming"}: ${msg.body}`)
+      .join("\n");
+
     // 1. Customer lookup in Supabase
     const lookupRes = await fetch(`${APP_URL}/api/vapi/customer-lookup`, {
       method: "POST",
@@ -52,8 +75,8 @@ export async function POST(request: NextRequest) {
       slotsData = await slotsRes.json();
     }
 
-    // 3. Build Claude prompt and get intent
-    const aiResult = await classifyIntent(body, customerData, slotsData);
+    // 3. Build Claude prompt and get intent (with conversation history)
+    const aiResult = await classifyIntent(body, customerData, slotsData, conversationThread);
 
     // 4. Take action
     let replyText = aiResult.reply;
@@ -120,6 +143,14 @@ export async function POST(request: NextRequest) {
         }),
       });
 
+      // Store outbound in conversation history
+      await sb.from("sms_conversations").insert({
+        tenant_id: 1,
+        phone: from,
+        direction: "outbound",
+        body: replyText,
+      });
+
       // Log outbound
       await sb.from("sms_logs").insert({
         tenant_id: 1,
@@ -157,7 +188,8 @@ export async function POST(request: NextRequest) {
 async function classifyIntent(
   smsBody: string,
   customer: any,
-  slots: any
+  slots: any,
+  conversationThread?: string
 ): Promise<{ action: string; reply: string; chosen_date?: string; tech_id?: string }> {
   if (!ANTHROPIC_API_KEY) {
     return { action: "unclear", reply: "Thanks for reaching out! Please call us at (855) 269-3196." };
@@ -178,8 +210,13 @@ async function classifyIntent(
   const prompt = `You are a friendly SMS assistant for Fleming Appliance Repair. Return ONLY valid JSON. No markdown, no backticks.
 
 Today: ${today} (${todayName})
+${conversationThread ? `
+CONVERSATION HISTORY (most recent messages):
+${conversationThread}
 
-CUSTOMER MESSAGE: "${smsBody}"
+The LATEST message from the customer is what you are responding to. Use the conversation history to understand context — for example, if Fleming just offered dates and the customer says "yes" or "the 7th", they are responding to that offer.
+` : ""}
+CURRENT MESSAGE: "${smsBody}"
 CUSTOMER NAME: ${customer.customer_name}
 CUSTOMER ADDRESS: ${customer.address}
 
