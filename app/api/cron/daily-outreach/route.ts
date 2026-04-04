@@ -24,6 +24,14 @@ export async function GET(request: NextRequest) {
 
   try {
     const sb = supabaseAdmin();
+
+    // Business hours check: 8am - 8:30pm CT
+    const ctHour = parseInt(new Date().toLocaleString("en-US", { timeZone: "America/Chicago", hour: "numeric", hour12: false }));
+    const ctMin = parseInt(new Date().toLocaleString("en-US", { timeZone: "America/Chicago", minute: "numeric" }));
+    if (ctHour < 8 || (ctHour === 20 && ctMin >= 30) || ctHour > 20) {
+      return NextResponse.json({ skipped: true, reason: "Outside business hours (8am-8:30pm CT)" });
+    }
+
     const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
     const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
 
