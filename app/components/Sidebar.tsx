@@ -16,6 +16,7 @@ import {
   Settings,
   HelpCircle,
   Wrench,
+  MessageSquare,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -26,6 +27,7 @@ const navItems = [
   { label: "Customers", href: "/customers", icon: Users },
   { label: "Technicians", href: "/people", icon: Wrench },
   { label: "Work Orders", href: "/work-orders", icon: ClipboardList },
+  { label: "SMS Center", href: "/sms", icon: MessageSquare },
   { label: "Map", href: "/map", icon: MapPin },
   { label: "Scheduling", href: "/scheduling", icon: CalendarDays },
   { label: "Invoices", href: "/invoices", icon: FileText },
