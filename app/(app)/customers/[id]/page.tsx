@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { useSoftphone } from "@/app/(app)/layout";
 import {
   ArrowLeft,
   User,
@@ -65,6 +66,7 @@ export default function CustomerPage() {
   const isNew = customerId === "new";
 
   const { tenantUser } = useAuth();
+  const { openSoftphone } = useSoftphone();
   const [customer, setCustomer] = useState<CustomerData | null>(null);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -297,13 +299,13 @@ export default function CustomerPage() {
               <a href={`tel:${customer.phone}`} className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700">
                 <Phone size={14} /> {customer.phone}
               </a>
-              <a
-                href={`tel:${customer.phone}`}
+              <button
+                onClick={() => openSoftphone(customer.phone, customer.customer_name)}
                 className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition"
               >
                 <PhoneCall size={12} />
                 Call
-              </a>
+              </button>
             </div>
           )}
           {customer?.email && (

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useAuth } from "@/lib/AuthContext";
+import { useSoftphone } from "@/app/(app)/layout";
 import { supabase } from "@/lib/supabase";
 import {
   MessageSquare,
@@ -36,6 +37,7 @@ interface Message {
 
 export default function SMSCommandCenter() {
   const { tenantUser } = useAuth();
+  const { openSoftphone } = useSoftphone();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
@@ -348,13 +350,13 @@ export default function SMSCommandCenter() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <a
-                    href={`tel:${selectedPhone}`}
+                  <button
+                    onClick={() => openSoftphone(selectedPhone, selectedCustomer || undefined)}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition"
                   >
                     <PhoneCall size={14} />
                     Call
-                  </a>
+                  </button>
                 </div>
               </div>
 
