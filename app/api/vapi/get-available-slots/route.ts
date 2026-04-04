@@ -178,10 +178,10 @@ export async function POST(request: NextRequest) {
     // Build agent summary
     const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
     const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-    function fmtDate(ds: string): string {
+    const fmtDate = (ds: string): string => {
       const dt = new Date(ds + "T12:00:00");
       return `${dayNames[dt.getDay()]}, ${months[dt.getMonth()]} ${dt.getDate()}`;
-    }
+    };
 
     let agentSummary: string;
     if (available.length === 0) {

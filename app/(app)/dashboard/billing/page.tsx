@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { Suspense, useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -16,7 +16,7 @@ import {
   DollarSign,
 } from "lucide-react";
 
-export default function BillingPage() {
+function BillingContent() {
   const { user, tenantUser } = useAuth();
   const searchParams = useSearchParams();
 
@@ -381,5 +381,13 @@ export default function BillingPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center py-24"><div className="text-sm text-gray-500">Loading...</div></div>}>
+      <BillingContent />
+    </Suspense>
   );
 }

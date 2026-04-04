@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { Suspense, useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
@@ -93,7 +93,7 @@ function formatTime(t: string | null): string {
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 7); // 7am-6pm
 
 // ── Component ──────────────────────────────────────────
-export default function SchedulingPage() {
+function SchedulingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { tenantUser } = useAuth();
@@ -614,5 +614,13 @@ export default function SchedulingPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SchedulingPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center py-24"><div className="text-sm text-gray-500">Loading...</div></div>}>
+      <SchedulingContent />
+    </Suspense>
   );
 }
