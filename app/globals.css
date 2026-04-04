@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: 4, 120, 220;
+  --primary-2: 37, 99, 235;
+  --accent: 86, 214, 242;
+  --background: 245, 247, 250;
+  --surface: 255, 255, 255;
+  --text-primary: 15, 23, 42;
+  --text-secondary: 71, 85, 105;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900 antialiased;
+  font-family: "Inter", "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+input,
+textarea,
+select {
+  @apply bg-white border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-lg;
+  outline: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.6);
+}
+
+/* Status badge colors */
+.badge-new {
+  @apply bg-blue-100 text-blue-700;
+}
+.badge-open {
+  @apply bg-orange-100 text-orange-700;
+}
+.badge-scheduled {
+  @apply bg-purple-100 text-purple-700;
+}
+.badge-in-progress {
+  @apply bg-yellow-100 text-yellow-700;
+}
+.badge-completed {
+  @apply bg-green-100 text-green-700;
+}
+.badge-closed {
+  @apply bg-green-100 text-green-700;
+}
+.badge-canceled {
+  @apply bg-gray-100 text-gray-600;
+}
+.badge-draft {
+  @apply bg-gray-100 text-gray-600;
+}
