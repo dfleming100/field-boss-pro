@@ -1,154 +1,159 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
+import {
+  ArrowLeft,
+  Phone,
+  Mic,
+  CreditCard,
+  Megaphone,
+  Bot,
+  CheckCircle2,
+  AlertCircle,
+  Save,
+  Eye,
+  EyeOff,
+  Copy,
+} from "lucide-react";
 
-interface TenantData {
-  id: string;
-  name: string;
-  stripe_connect_account_id: string | null;
+interface TwilioConfig {
+  accountSid: string;
+  authToken: string;
+  phoneNumber: string;
+  apiKeySid: string;
+  apiKeySecret: string;
+  twimlAppSid: string;
 }
 
-interface Integration {
-  id: string;
-  integration_type: "twilio" | "vapi" | "leadform" | "other";
-  api_key: string;
-  config: Record<string, any>;
-  active: boolean;
+interface VapiConfig {
+  apiKey: string;
+  phoneNumberId: string;
+  assistantId: string;
 }
+
+interface AnthropicConfig {
+  apiKey: string;
+}
+
+const emptyTwilio: TwilioConfig = { accountSid: "", authToken: "", phoneNumber: "", apiKeySid: "", apiKeySecret: "", twimlAppSid: "" };
+const emptyVapi: VapiConfig = { apiKey: "", phoneNumberId: "", assistantId: "" };
+const emptyAnthropic: AnthropicConfig = { apiKey: "" };
 
 export default function TenantIntegrationPage() {
   const router = useRouter();
   const params = useParams();
   const tenantId = params.tenant_id as string;
-  const { user, tenantUser, loading } = useAuth();
+  const { tenantUser } = useAuth();
 
-  const [tenant, setTenant] = useState<TenantData | null>(null);
-  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [tenant, setTenant] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"twilio" | "vapi" | "leadform">(
-    "twilio"
-  );
-
-  // Form states
-  const [twilioSid, setTwilioSid] = useState("");
-  const [twilioToken, setTwilioToken] = useState("");
-  const [twilioPhone, setTwilioPhone] = useState("");
-
-  const [vapiApiKey, setVapiApiKey] = useState("");
-  const [vapiPhoneNumber, setVapiPhoneNumber] = useState("");
-
-  const [leadFormName, setLeadFormName] = useState("");
-  const [leadFormType, setLeadFormType] = useState<
-    "google_ads" | "facebook_ads" | "web_form" | "phone_call"
-  >("web_form");
-  const [leadFormConfig, setLeadFormConfig] = useState("");
-
+  const [successMsg, setSuccessMsg] = useState("");
+  const [activeTab, setActiveTab] = useState("twilio");
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    if (!loading) {
-      if (!user || tenantUser?.role !== "admin") {
-        router.push("/dashboard");
-        return;
-      }
-      fetchData();
-    }
-  }, [loading, user, tenantUser, router, tenantId]);
+  // Form states
+  const [twilio, setTwilio] = useState<TwilioConfig>(emptyTwilio);
+  const [vapi, setVapi] = useState<VapiConfig>(emptyVapi);
+  const [anthropic, setAnthropic] = useState<AnthropicConfig>(emptyAnthropic);
 
-  const fetchData = async () => {
+  // Show/hide secrets
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+
+  const toggleSecret = (key: string) => {
+    setShowSecrets((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const fetchData = useCallback(async () => {
     try {
-      // Fetch tenant
-      const { data: tenantData, error: tenantError } = await supabase
+      const { data: tenantData } = await supabase
         .from("tenants")
         .select("*")
         .eq("id", tenantId)
         .single();
 
-      if (tenantError) throw tenantError;
       setTenant(tenantData);
 
-      // Fetch integrations
-      const { data: integrationsData, error: intError } = await supabase
+      // Fetch all integrations for this tenant
+      const { data: integrations } = await supabase
         .from("tenant_integrations")
         .select("*")
         .eq("tenant_id", tenantId);
 
-      if (intError) throw intError;
-      setIntegrations(integrationsData || []);
-
-      // Populate form with existing data
-      const twilio = integrationsData?.find(
-        (i: Integration) => i.integration_type === "twilio"
-      );
-      if (twilio) {
-        setTwilioSid(twilio.api_key || "");
-        setTwilioToken(twilio.config?.api_secret || "");
-        setTwilioPhone(twilio.config?.phone_number || "");
-      }
-
-      const vapi = integrationsData?.find((i: Integration) => i.integration_type === "vapi");
-      if (vapi) {
-        setVapiApiKey(vapi.api_key || "");
-        setVapiPhoneNumber(vapi.config?.phone_number || "");
+      for (const int of integrations || []) {
+        const keys = int.encrypted_keys || {};
+        switch (int.integration_type) {
+          case "twilio":
+            setTwilio({
+              accountSid: keys.accountSid || "",
+              authToken: keys.authToken || "",
+              phoneNumber: keys.phoneNumber || "",
+              apiKeySid: keys.apiKeySid || "",
+              apiKeySecret: keys.apiKeySecret || "",
+              twimlAppSid: keys.twimlAppSid || "",
+            });
+            break;
+          case "vapi":
+            setVapi({
+              apiKey: keys.apiKey || "",
+              phoneNumberId: keys.phoneNumberId || "",
+              assistantId: keys.assistantId || "",
+            });
+            break;
+          case "anthropic":
+            setAnthropic({ apiKey: keys.apiKey || "" });
+            break;
+        }
       }
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [tenantId]);
 
-  const handleSaveTwilio = async () => {
-    if (!twilioSid || !twilioToken || !twilioPhone) {
-      setError("All Twilio fields are required");
-      return;
-    }
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
+  const saveIntegration = async (type: string, keys: Record<string, string>) => {
     setIsSaving(true);
+    setError("");
+    setSuccessMsg("");
+
     try {
-      const existing = integrations.find(
-        (i) => i.integration_type === "twilio"
-      );
+      // Check if integration exists
+      const { data: existing } = await supabase
+        .from("tenant_integrations")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("integration_type", type)
+        .single();
 
       if (existing) {
-        // Update
-        const { error: updateError } = await supabase
+        await supabase
           .from("tenant_integrations")
           .update({
-            api_key: twilioSid,
-            config: {
-              api_secret: twilioToken,
-              phone_number: twilioPhone,
-            },
-            updated_at: new Date().toISOString(),
+            encrypted_keys: keys,
+            encryption_key: "plaintext",
+            is_configured: Object.values(keys).some((v) => v.length > 0),
           })
           .eq("id", existing.id);
-
-        if (updateError) throw updateError;
       } else {
-        // Create
-        const { error: insertError } = await supabase
-          .from("tenant_integrations")
-          .insert({
-            tenant_id: tenantId,
-            integration_type: "twilio",
-            api_key: twilioSid,
-            config: {
-              api_secret: twilioToken,
-              phone_number: twilioPhone,
-            },
-            active: true,
-          });
-
-        if (insertError) throw insertError;
+        await supabase.from("tenant_integrations").insert({
+          tenant_id: tenantId,
+          integration_type: type,
+          encrypted_keys: keys,
+          encryption_key: "plaintext",
+          is_configured: Object.values(keys).some((v) => v.length > 0),
+        });
       }
 
-      setError("");
-      await fetchData();
+      setSuccessMsg(`${type.charAt(0).toUpperCase() + type.slice(1)} saved successfully`);
+      setTimeout(() => setSuccessMsg(""), 3000);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -156,267 +161,350 @@ export default function TenantIntegrationPage() {
     }
   };
 
-  const handleSaveVapi = async () => {
-    if (!vapiApiKey || !vapiPhoneNumber) {
-      setError("All Vapi fields are required");
-      return;
-    }
+  const appUrl = "https://field-boss-pro.vercel.app";
 
-    setIsSaving(true);
-    try {
-      const existing = integrations.find((i) => i.integration_type === "vapi");
+  const SecretField = ({
+    label, value, onChange, placeholder, fieldKey, helpText,
+  }: {
+    label: string; value: string; onChange: (v: string) => void;
+    placeholder: string; fieldKey: string; helpText?: string;
+  }) => (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <div className="relative">
+        <input
+          type={showSecrets[fieldKey] ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="w-full px-3 py-2 pr-10 text-sm border border-gray-300 rounded-lg font-mono"
+        />
+        <button
+          type="button"
+          onClick={() => toggleSecret(fieldKey)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+        >
+          {showSecrets[fieldKey] ? <EyeOff size={14} /> : <Eye size={14} />}
+        </button>
+      </div>
+      {helpText && <p className="text-xs text-gray-400 mt-1">{helpText}</p>}
+    </div>
+  );
 
-      if (existing) {
-        const { error: updateError } = await supabase
-          .from("tenant_integrations")
-          .update({
-            api_key: vapiApiKey,
-            config: {
-              phone_number: vapiPhoneNumber,
-            },
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", existing.id);
-
-        if (updateError) throw updateError;
-      } else {
-        const { error: insertError } = await supabase
-          .from("tenant_integrations")
-          .insert({
-            tenant_id: tenantId,
-            integration_type: "vapi",
-            api_key: vapiApiKey,
-            config: {
-              phone_number: vapiPhoneNumber,
-            },
-            active: true,
-          });
-
-        if (insertError) throw insertError;
-      }
-
-      setError("");
-      await fetchData();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  const StatusBadge = ({ configured }: { configured: boolean }) => (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+      configured ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+    }`}>
+      {configured ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+      {configured ? "Configured" : "Not configured"}
+    </span>
+  );
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
-        <div className="text-gray-500">Loading...</div>
+      <div className="flex items-center justify-center py-24">
+        <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
-  if (!tenant) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
-        <div className="text-red-500">Tenant not found</div>
-      </div>
-    );
-  }
+  const tabs = [
+    { id: "twilio", label: "Twilio", icon: Phone, configured: !!twilio.accountSid },
+    { id: "vapi", label: "Vapi", icon: Mic, configured: !!vapi.apiKey },
+    { id: "anthropic", label: "AI (Claude)", icon: Bot, configured: !!anthropic.apiKey },
+    { id: "webhooks", label: "Webhooks", icon: Megaphone, configured: true },
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Navigation */}
-      <nav className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center gap-4">
-          <button
-            onClick={() => router.back()}
-            className="text-gray-600 hover:text-gray-900"
-          >
-            ← Back
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">{tenant.name}</h1>
-            <p className="text-sm text-gray-600">Integration Settings</p>
-          </div>
+    <div className="max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center gap-4 mb-6">
+        <button onClick={() => router.back()} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
+          <ArrowLeft size={20} />
+        </button>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">{tenant?.name || "Tenant"}</h1>
+          <p className="text-sm text-gray-500">Integration Settings — Super Admin</p>
         </div>
-      </nav>
+      </div>
 
-      {/* Main Content */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-700">{error}</p>
-          </div>
-        )}
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
+          <AlertCircle size={16} className="text-red-500" />
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+      {successMsg && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
+          <CheckCircle2 size={16} className="text-green-500" />
+          <p className="text-sm text-green-700">{successMsg}</p>
+        </div>
+      )}
 
-        {/* Tabs */}
-        <div className="flex gap-4 mb-8 border-b border-gray-200">
-          {(["twilio", "vapi", "leadform"] as const).map((tab) => (
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6 border-b border-gray-200">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 font-medium border-b-2 transition ${
-                activeTab === tab
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition ${
+                activeTab === tab.id
                   ? "border-indigo-600 text-indigo-600"
-                  : "border-transparent text-gray-600 hover:text-gray-900"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
               }`}
             >
-              {tab === "twilio" && "Twilio"}
-              {tab === "vapi" && "Vapi"}
-              {tab === "leadform" && "Lead Forms"}
+              <Icon size={16} />
+              {tab.label}
+              <StatusBadge configured={tab.configured} />
             </button>
-          ))}
-        </div>
+          );
+        })}
+      </div>
 
-        {/* Twilio Tab */}
-        {activeTab === "twilio" && (
-          <div className="bg-white rounded-lg shadow p-6 max-w-2xl">
-            <h3 className="text-lg font-semibold text-gray-900 mb-6">
-              Twilio Configuration
-            </h3>
-            <div className="space-y-6">
+      {/* ── Twilio Tab ── */}
+      {activeTab === "twilio" && (
+        <div className="space-y-6">
+          {/* Core Twilio */}
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Twilio SMS & Voice</h2>
+            <p className="text-sm text-gray-500 mb-4">Core Twilio credentials for SMS and voice calls</p>
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Account SID
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Account SID</label>
                 <input
                   type="text"
-                  value={twilioSid}
-                  onChange={(e) => setTwilioSid(e.target.value)}
+                  value={twilio.accountSid}
+                  onChange={(e) => setTwilio({ ...twilio, accountSid: e.target.value })}
                   placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono"
                 />
               </div>
-
+              <SecretField
+                label="Auth Token" value={twilio.authToken}
+                onChange={(v) => setTwilio({ ...twilio, authToken: v })}
+                placeholder="Your Twilio auth token" fieldKey="twilioAuth"
+              />
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Auth Token
-                </label>
-                <input
-                  type="password"
-                  value={twilioToken}
-                  onChange={(e) => setTwilioToken(e.target.value)}
-                  placeholder="••••••••••••••••••••••••••••••••"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Phone Number
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
                 <input
                   type="tel"
-                  value={twilioPhone}
-                  onChange={(e) => setTwilioPhone(e.target.value)}
-                  placeholder="+1234567890"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                  value={twilio.phoneNumber}
+                  onChange={(e) => setTwilio({ ...twilio, phoneNumber: e.target.value })}
+                  placeholder="+18552693196"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
                 />
               </div>
-
-              <button
-                onClick={handleSaveTwilio}
-                disabled={isSaving}
-                className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition"
-              >
-                {isSaving ? "Saving..." : "Save Twilio Configuration"}
-              </button>
             </div>
           </div>
-        )}
 
-        {/* Vapi Tab */}
-        {activeTab === "vapi" && (
-          <div className="bg-white rounded-lg shadow p-6 max-w-2xl">
-            <h3 className="text-lg font-semibold text-gray-900 mb-6">
-              Vapi Configuration
-            </h3>
-            <div className="space-y-6">
+          {/* Softphone / Browser Calling */}
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Softphone (Browser Calling)</h2>
+            <p className="text-sm text-gray-500 mb-4">Required for click-to-call from Field Boss. Customer sees the business number as caller ID.</p>
+            <div className="space-y-4">
+              <SecretField
+                label="API Key SID" value={twilio.apiKeySid}
+                onChange={(v) => setTwilio({ ...twilio, apiKeySid: v })}
+                placeholder="SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" fieldKey="apiKeySid"
+                helpText="Twilio Console → Account → API Keys → Create new key"
+              />
+              <SecretField
+                label="API Key Secret" value={twilio.apiKeySecret}
+                onChange={(v) => setTwilio({ ...twilio, apiKeySecret: v })}
+                placeholder="Your API key secret" fieldKey="apiKeySecret"
+                helpText="Shown once when you create the key — save it"
+              />
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  API Key
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">TwiML App SID</label>
                 <input
-                  type="password"
-                  value={vapiApiKey}
-                  onChange={(e) => setVapiApiKey(e.target.value)}
-                  placeholder="••••••••••••••••••••••••••••••••"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                  type="text"
+                  value={twilio.twimlAppSid}
+                  onChange={(e) => setTwilio({ ...twilio, twimlAppSid: e.target.value })}
+                  placeholder="APxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono"
                 />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Phone Number
-                </label>
-                <input
-                  type="tel"
-                  value={vapiPhoneNumber}
-                  onChange={(e) => setVapiPhoneNumber(e.target.value)}
-                  placeholder="+1234567890"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
-              </div>
-
-              <button
-                onClick={handleSaveVapi}
-                disabled={isSaving}
-                className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition"
-              >
-                {isSaving ? "Saving..." : "Save Vapi Configuration"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Lead Forms Tab */}
-        {activeTab === "leadform" && (
-          <div className="bg-white rounded-lg shadow p-6 max-w-2xl">
-            <h3 className="text-lg font-semibold text-gray-900 mb-6">
-              Lead Form Configuration
-            </h3>
-            <div className="space-y-6">
-              <p className="text-sm text-gray-600">
-                Configure lead capture from Google Ads, Facebook Ads, or web forms. This is extensible for future ad platforms.
-              </p>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Form Type
-                </label>
-                <select
-                  value={leadFormType}
-                  onChange={(e) =>
-                    setLeadFormType(
-                      e.target.value as
-                        | "google_ads"
-                        | "facebook_ads"
-                        | "web_form"
-                        | "phone_call"
-                    )
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                >
-                  <option value="web_form">Web Form</option>
-                  <option value="google_ads">Google Ads Lead Form</option>
-                  <option value="facebook_ads">Facebook Ads Lead Form</option>
-                  <option value="phone_call">Phone Call (Vapi)</option>
-                </select>
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800">
-                  ℹ️ Lead forms will automatically convert leads to customers in your system. Connects with Twilio and Vapi for call routing.
+                <p className="text-xs text-gray-400 mt-1">
+                  Twilio Console → Voice → TwiML Apps → Create. Set Voice URL to: <code className="bg-gray-100 px-1 rounded">{appUrl}/api/twilio/twiml</code>
                 </p>
               </div>
-
-              <button
-                disabled={isSaving}
-                className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition"
-              >
-                {isSaving ? "Saving..." : "Configure Lead Forms"}
-              </button>
             </div>
           </div>
-        )}
-      </div>
+
+          {/* Webhook URLs (read-only) */}
+          <div className="bg-gray-50 rounded-xl border border-gray-200 p-6">
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">Twilio Webhook URLs (set in Twilio Console)</h2>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-3 py-2">
+                <div>
+                  <p className="text-xs text-gray-500">Incoming SMS Webhook</p>
+                  <code className="text-xs text-gray-900">{appUrl}/api/sms/incoming</code>
+                </div>
+                <button onClick={() => navigator.clipboard.writeText(`${appUrl}/api/sms/incoming`)} className="p-1 text-gray-400 hover:text-gray-600">
+                  <Copy size={14} />
+                </button>
+              </div>
+              <div className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-3 py-2">
+                <div>
+                  <p className="text-xs text-gray-500">TwiML Voice URL</p>
+                  <code className="text-xs text-gray-900">{appUrl}/api/twilio/twiml</code>
+                </div>
+                <button onClick={() => navigator.clipboard.writeText(`${appUrl}/api/twilio/twiml`)} className="p-1 text-gray-400 hover:text-gray-600">
+                  <Copy size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => saveIntegration("twilio", twilio as any)}
+            disabled={isSaving}
+            className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+          >
+            <Save size={16} />
+            {isSaving ? "Saving..." : "Save Twilio Configuration"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Vapi Tab ── */}
+      {activeTab === "vapi" && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Vapi Voice Agent</h2>
+            <p className="text-sm text-gray-500 mb-4">AI voice agent for inbound calls — handles scheduling, customer lookup, and booking</p>
+            <div className="space-y-4">
+              <SecretField
+                label="Vapi API Key" value={vapi.apiKey}
+                onChange={(v) => setVapi({ ...vapi, apiKey: v })}
+                placeholder="Your Vapi API key" fieldKey="vapiKey"
+                helpText="Vapi Dashboard → Settings → API Keys"
+              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number ID</label>
+                <input
+                  type="text"
+                  value={vapi.phoneNumberId}
+                  onChange={(e) => setVapi({ ...vapi, phoneNumberId: e.target.value })}
+                  placeholder="Vapi phone number ID"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Assistant ID</label>
+                <input
+                  type="text"
+                  value={vapi.assistantId}
+                  onChange={(e) => setVapi({ ...vapi, assistantId: e.target.value })}
+                  placeholder="Vapi assistant ID"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Vapi Tool URLs */}
+          <div className="bg-gray-50 rounded-xl border border-gray-200 p-6">
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">Vapi Custom Tool URLs (set in Vapi Dashboard)</h2>
+            <div className="space-y-2 text-sm">
+              {[
+                { label: "Customer Lookup", path: "/api/vapi/customer-lookup" },
+                { label: "Get Available Slots", path: "/api/vapi/get-available-slots" },
+                { label: "Book Appointment", path: "/api/vapi/book-appointment" },
+              ].map((tool) => (
+                <div key={tool.path} className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-3 py-2">
+                  <div>
+                    <p className="text-xs text-gray-500">{tool.label}</p>
+                    <code className="text-xs text-gray-900">{appUrl}{tool.path}</code>
+                  </div>
+                  <button onClick={() => navigator.clipboard.writeText(`${appUrl}${tool.path}`)} className="p-1 text-gray-400 hover:text-gray-600">
+                    <Copy size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={() => saveIntegration("vapi", vapi as any)}
+            disabled={isSaving}
+            className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+          >
+            <Save size={16} />
+            {isSaving ? "Saving..." : "Save Vapi Configuration"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Anthropic / AI Tab ── */}
+      {activeTab === "anthropic" && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">AI Agent (Claude)</h2>
+            <p className="text-sm text-gray-500 mb-4">Powers the SMS AI agent for intent classification and customer service responses</p>
+            <div className="space-y-4">
+              <SecretField
+                label="Anthropic API Key" value={anthropic.apiKey}
+                onChange={(v) => setAnthropic({ ...anthropic, apiKey: v })}
+                placeholder="sk-ant-api03-..." fieldKey="anthropicKey"
+                helpText="console.anthropic.com → API Keys"
+              />
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm text-blue-800">
+                  Uses Claude Haiku for fast, cost-effective SMS responses. Handles scheduling, pricing questions, status checks, and more.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => saveIntegration("anthropic", anthropic as any)}
+            disabled={isSaving}
+            className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+          >
+            <Save size={16} />
+            {isSaving ? "Saving..." : "Save AI Configuration"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Webhooks Tab ── */}
+      {activeTab === "webhooks" && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Webhook Endpoints</h2>
+            <p className="text-sm text-gray-500 mb-4">These URLs receive data from external systems. Set them in the corresponding dashboards.</p>
+            <div className="space-y-3">
+              {[
+                { label: "Twilio Incoming SMS", path: "/api/sms/incoming", desc: "Set in Twilio Console → Phone Number → Messaging" },
+                { label: "Twilio Voice (TwiML)", path: "/api/twilio/twiml", desc: "Set in Twilio Console → TwiML App → Voice URL" },
+                { label: "Stripe Webhook", path: "/api/stripe/webhook", desc: "Set in Stripe Dashboard → Webhooks" },
+                { label: "AHS Warranty Inbound", path: "/api/warranty/inbound", desc: "Give to AHS for pushing new work orders" },
+                { label: "AHS Status Sync", path: "/api/warranty/status", desc: "Bidirectional status updates with warranty companies" },
+                { label: "Vapi: Customer Lookup", path: "/api/vapi/customer-lookup", desc: "Vapi custom tool" },
+                { label: "Vapi: Get Available Slots", path: "/api/vapi/get-available-slots", desc: "Vapi custom tool" },
+                { label: "Vapi: Book Appointment", path: "/api/vapi/book-appointment", desc: "Vapi custom tool" },
+              ].map((endpoint) => (
+                <div key={endpoint.path} className="flex items-center justify-between bg-gray-50 rounded-lg border border-gray-200 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{endpoint.label}</p>
+                    <code className="text-xs text-indigo-600">{appUrl}{endpoint.path}</code>
+                    <p className="text-xs text-gray-400 mt-0.5">{endpoint.desc}</p>
+                  </div>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(`${appUrl}${endpoint.path}`)}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 bg-white border border-gray-200 rounded hover:bg-gray-50"
+                  >
+                    <Copy size={12} />
+                    Copy
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
