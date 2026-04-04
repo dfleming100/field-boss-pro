@@ -24,18 +24,18 @@ export async function GET(request: NextRequest) {
 
   try {
     const sb = supabaseAdmin();
-    const tenHoursAgo = new Date(Date.now() - 10 * 3600 * 1000).toISOString();
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
 
     // Fetch eligible work orders
     const { data: workOrders } = await sb
       .from("work_orders")
       .select(`
         id, tenant_id, work_order_number, status, job_type, appliance_type,
-        outreach_count, last_outreach_date,
+        outreach_count, last_outreach_date, first_outreach_date,
         customer:customers(customer_name, phone)
       `)
       .in("status", ["New", "Parts Have Arrived"])
-      .lt("outreach_count", 5)
       .order("created_at", { ascending: true })
       .limit(50);
 
@@ -45,8 +45,13 @@ export async function GET(request: NextRequest) {
       const customer = wo.customer as any;
       if (!customer?.phone) continue;
 
-      // Skip if last outreach was less than 10 hours ago
-      if (wo.last_outreach_date && new Date(wo.last_outreach_date) > new Date(tenHoursAgo)) {
+      // Stop after 5 days from first outreach
+      if (wo.first_outreach_date && new Date(wo.first_outreach_date) < new Date(fiveDaysAgo)) {
+        continue;
+      }
+
+      // Skip if last outreach (SMS or Vapi) was less than 2 hours ago
+      if (wo.last_outreach_date && new Date(wo.last_outreach_date) > new Date(twoHoursAgo)) {
         continue;
       }
 

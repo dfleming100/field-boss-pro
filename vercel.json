@@ -12,6 +12,14 @@
       "schedule": "0 14 * * 1-5"
     },
     {
+      "path": "/api/cron/vapi-outreach",
+      "schedule": "0 16 * * 1-5"
+    },
+    {
+      "path": "/api/cron/vapi-outreach",
+      "schedule": "0 20 * * 1-5"
+    },
+    {
       "path": "/api/cron/daily-outreach",
       "schedule": "0 2 * * 2-6"
     }
