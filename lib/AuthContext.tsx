@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
@@ -32,155 +32,141 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
-  children,
-}) => {
-  // Initialize from localStorage cache for instant page loads
-  const [user, setUser] = useState<User | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const cached = localStorage.getItem("fb_user");
-      return cached ? JSON.parse(cached) : null;
-    } catch { return null; }
-  });
-  const [tenantUser, setTenantUser] = useState<TenantUser | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const cached = localStorage.getItem("fb_tenant_user");
-      return cached ? JSON.parse(cached) : null;
-    } catch { return null; }
-  });
+// Read from localStorage safely
+function readCache<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function writeCache(key: string, value: any) {
+  try {
+    if (value) localStorage.setItem(key, JSON.stringify(value));
+    else localStorage.removeItem(key);
+  } catch {}
+}
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(() => readCache("fb_user"));
+  const [tenantUser, setTenantUser] = useState<TenantUser | null>(() => readCache("fb_tenant_user"));
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(() => {
-    // If we have cached data, don't show loading
-    if (typeof window === "undefined") return true;
-    return !localStorage.getItem("fb_user");
-  });
+  const [loading, setLoading] = useState(() => !readCache("fb_user"));
   const [error, setError] = useState<string | null>(null);
-
-  const updateUser = useCallback((u: User | null) => {
-    setUser(u);
-    if (u) {
-      localStorage.setItem("fb_user", JSON.stringify(u));
-    } else {
-      localStorage.removeItem("fb_user");
-    }
-  }, []);
-
-  const updateTenantUser = useCallback((tu: TenantUser | null) => {
-    setTenantUser(tu);
-    if (tu) {
-      localStorage.setItem("fb_tenant_user", JSON.stringify(tu));
-    } else {
-      localStorage.removeItem("fb_tenant_user");
-    }
-  }, []);
-
-  const fetchTenantUser = useCallback(async (userId: string) => {
-    try {
-      const { data } = await supabase
-        .from("tenant_users")
-        .select("*")
-        .eq("auth_uid", userId)
-        .single();
-      if (data) updateTenantUser(data as TenantUser);
-    } catch {
-      // Silent fail — tenant user may not exist yet (onboarding)
-    }
-  }, [updateTenantUser]);
+  const initDone = useRef(false);
+  const tenantUserFetched = useRef(!!readCache("fb_tenant_user"));
 
   const clearAuth = useCallback(() => {
-    updateUser(null);
+    setUser(null);
     setSession(null);
-    updateTenantUser(null);
-    // Clear all Supabase keys
+    setTenantUser(null);
+    writeCache("fb_user", null);
+    writeCache("fb_tenant_user", null);
     Object.keys(localStorage).forEach((key) => {
-      if (key.startsWith("sb-") || key.includes("supabase") || key.startsWith("fb_")) {
+      if (key.startsWith("sb-") || key.includes("supabase")) {
         localStorage.removeItem(key);
       }
     });
-  }, [updateUser, updateTenantUser]);
+  }, []);
 
   useEffect(() => {
+    if (initDone.current) return;
+    initDone.current = true;
+
     let mounted = true;
 
     const init = async () => {
       try {
-        // BEFORE calling Supabase, check localStorage for expired tokens
-        // If expired, clear them so getSession() returns null instantly
-        try {
-          const storageKeys = Object.keys(localStorage);
-          for (const key of storageKeys) {
-            if (key.startsWith("sb-") && key.endsWith("-auth-token")) {
-              const raw = localStorage.getItem(key);
-              if (raw) {
-                const parsed = JSON.parse(raw);
-                const expiresAt = parsed?.expires_at || parsed?.currentSession?.expires_at;
-                if (expiresAt && expiresAt * 1000 < Date.now()) {
-                  localStorage.removeItem(key);
-                }
-              }
-            }
+        // Clear expired tokens from localStorage before calling Supabase
+        Object.keys(localStorage).forEach((key) => {
+          if (key.startsWith("sb-") && key.endsWith("-auth-token")) {
+            try {
+              const parsed = JSON.parse(localStorage.getItem(key) || "");
+              const exp = parsed?.expires_at || parsed?.currentSession?.expires_at;
+              if (exp && exp * 1000 < Date.now()) localStorage.removeItem(key);
+            } catch { localStorage.removeItem(key); }
           }
-        } catch {
-          // If parsing fails, clear all supabase keys
-          Object.keys(localStorage).forEach((key) => {
-            if (key.startsWith("sb-") || key.includes("supabase")) {
-              localStorage.removeItem(key);
-            }
-          });
-        }
+        });
 
-        const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
-
+        const { data: { session: s } } = await supabase.auth.getSession();
         if (!mounted) return;
 
-        if (sessionError || !currentSession) {
-          clearAuth();
+        if (!s) {
+          if (!readCache("fb_user")) clearAuth();
           setLoading(false);
           return;
         }
 
-        setSession(currentSession);
-        updateUser(currentSession.user);
-        await fetchTenantUser(currentSession.user.id);
+        setSession(s);
+        setUser(s.user);
+        writeCache("fb_user", s.user);
+
+        // Only fetch tenant user if we don't have it cached
+        if (!tenantUserFetched.current) {
+          const { data } = await supabase
+            .from("tenant_users")
+            .select("*")
+            .eq("auth_uid", s.user.id)
+            .single();
+
+          if (mounted && data) {
+            setTenantUser(data as TenantUser);
+            writeCache("fb_tenant_user", data);
+            tenantUserFetched.current = true;
+          }
+        }
       } catch {
-        clearAuth();
+        // Don't clear cached data on error — let the app work from cache
       } finally {
         if (mounted) setLoading(false);
       }
     };
 
-    // Don't wait forever — 3 second max
-    const timeout = setTimeout(() => {
-      if (mounted) setLoading(false);
-    }, 3000);
-
+    // Safety timeout
+    const timeout = setTimeout(() => { if (mounted) setLoading(false); }, 3000);
     init().then(() => clearTimeout(timeout));
 
-    // Listen for auth changes (login, logout, token refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        if (!mounted) return;
+    // Auth state change listener — only handle sign in/out, NOT token refreshes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (!mounted) return;
 
-        if (event === "SIGNED_OUT" || !newSession) {
-          clearAuth();
-          return;
-        }
-
-        if (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") {
-          setSession(newSession);
-          updateUser(newSession.user);
-          await fetchTenantUser(newSession.user.id);
-        }
+      if (event === "SIGNED_OUT") {
+        clearAuth();
+        return;
       }
-    );
+
+      if (event === "SIGNED_IN" && newSession) {
+        setSession(newSession);
+        setUser(newSession.user);
+        writeCache("fb_user", newSession.user);
+
+        // Fetch tenant user for new sign in
+        supabase
+          .from("tenant_users")
+          .select("*")
+          .eq("auth_uid", newSession.user.id)
+          .single()
+          .then(({ data }) => {
+            if (data && mounted) {
+              setTenantUser(data as TenantUser);
+              writeCache("fb_tenant_user", data);
+              tenantUserFetched.current = true;
+            }
+          });
+      }
+
+      // TOKEN_REFRESHED — just update the session, don't re-fetch anything
+      if (event === "TOKEN_REFRESHED" && newSession) {
+        setSession(newSession);
+      }
+    });
 
     return () => {
       mounted = false;
       subscription?.unsubscribe();
     };
-  }, [fetchTenantUser, clearAuth]);
+  }, [clearAuth]);
 
   const signUp = async (email: string, password: string) => {
     try {
@@ -196,6 +182,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const signIn = async (email: string, password: string) => {
     try {
       setError(null);
+      tenantUserFetched.current = false;
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
     } catch (err) {
@@ -205,21 +192,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const signOut = async () => {
-    try {
-      setError(null);
-      await supabase.auth.signOut();
-      clearAuth();
-    } catch (err) {
-      // Force clear even if signOut API fails
-      clearAuth();
-      setError((err as Error).message);
-    }
+    clearAuth();
+    try { await supabase.auth.signOut(); } catch {}
+    window.location.href = "/login";
   };
 
   return (
-    <AuthContext.Provider
-      value={{ user, tenantUser, session, loading, error, signUp, signIn, signOut }}
-    >
+    <AuthContext.Provider value={{ user, tenantUser, session, loading, error, signUp, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );
@@ -227,8 +206,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within AuthProvider");
-  }
+  if (!context) throw new Error("useAuth must be used within AuthProvider");
   return context;
 };
