@@ -65,6 +65,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     const init = async () => {
       try {
+        // BEFORE calling Supabase, check localStorage for expired tokens
+        // If expired, clear them so getSession() returns null instantly
+        try {
+          const storageKeys = Object.keys(localStorage);
+          for (const key of storageKeys) {
+            if (key.startsWith("sb-") && key.endsWith("-auth-token")) {
+              const raw = localStorage.getItem(key);
+              if (raw) {
+                const parsed = JSON.parse(raw);
+                const expiresAt = parsed?.expires_at || parsed?.currentSession?.expires_at;
+                if (expiresAt && expiresAt * 1000 < Date.now()) {
+                  localStorage.removeItem(key);
+                }
+              }
+            }
+          }
+        } catch {
+          // If parsing fails, clear all supabase keys
+          Object.keys(localStorage).forEach((key) => {
+            if (key.startsWith("sb-") || key.includes("supabase")) {
+              localStorage.removeItem(key);
+            }
+          });
+        }
+
         const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
 
         if (!mounted) return;
@@ -75,29 +100,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           return;
         }
 
-        // Check if token is expired
-        const expiresAt = currentSession.expires_at;
-        if (expiresAt && expiresAt * 1000 < Date.now()) {
-          // Session expired — try to refresh
-          const { data: { session: refreshed }, error: refreshError } = await supabase.auth.refreshSession();
-          if (!mounted) return;
-
-          if (refreshError || !refreshed) {
-            // Can't refresh — clear everything
-            await supabase.auth.signOut();
-            clearAuth();
-            setLoading(false);
-            return;
-          }
-
-          setSession(refreshed);
-          setUser(refreshed.user);
-          await fetchTenantUser(refreshed.user.id);
-        } else {
-          setSession(currentSession);
-          setUser(currentSession.user);
-          await fetchTenantUser(currentSession.user.id);
-        }
+        setSession(currentSession);
+        setUser(currentSession.user);
+        await fetchTenantUser(currentSession.user.id);
       } catch {
         clearAuth();
       } finally {
