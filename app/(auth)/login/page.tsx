@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
+import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,6 +13,25 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [showReset, setShowReset] = useState(false);
+
+  const handleResetPassword = async () => {
+    if (!email) { setError("Enter your email address first"); return; }
+    setError("");
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/login`,
+      });
+      if (error) throw error;
+      setResetSent(true);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,9 +121,42 @@ export default function LoginPage() {
             </button>
           </form>
 
+          {/* Forgot Password */}
+          <div className="mt-4 text-center">
+            <button
+              onClick={() => { setShowReset(true); setError(""); setResetSent(false); }}
+              className="text-sm text-indigo-600 hover:text-indigo-700 font-medium"
+            >
+              Forgot password?
+            </button>
+          </div>
+
+          {showReset && (
+            <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+              {resetSent ? (
+                <p className="text-sm text-green-700 text-center">
+                  Password reset email sent! Check your inbox.
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Enter your email above and click below to receive a reset link.
+                  </p>
+                  <button
+                    onClick={handleResetPassword}
+                    disabled={isLoading}
+                    className="w-full bg-gray-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 transition"
+                  >
+                    {isLoading ? "Sending..." : "Send Reset Link"}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Signup Link */}
           <p className="mt-6 text-center text-sm text-gray-600">
-            Don't have an account?{" "}
+            Don&apos;t have an account?{" "}
             <Link href="/signup" className="text-indigo-600 hover:text-indigo-700 font-medium">
               Sign up
             </Link>
