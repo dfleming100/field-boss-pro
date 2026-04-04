@@ -154,6 +154,13 @@ export async function POST(request: NextRequest) {
     const startTime = to24h(win[0]);
     const endTime = to24h(win[1]);
 
+    // Cancel any existing scheduled appointments for this WO
+    await sb
+      .from("appointments")
+      .delete()
+      .eq("work_order_id", wo.id)
+      .eq("status", "scheduled");
+
     // Create appointment
     const { data: appt, error: apptErr } = await sb
       .from("appointments")
