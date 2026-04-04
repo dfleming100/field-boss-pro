@@ -10,6 +10,7 @@ import {
   User,
   MapPin,
   Phone,
+  PhoneCall,
   Mail,
   ClipboardList,
   CalendarDays,
@@ -292,9 +293,18 @@ export default function CustomerPage() {
             <h3 className="text-xs font-semibold text-gray-500 uppercase">Contact</h3>
           </div>
           {customer?.phone && (
-            <a href={`tel:${customer.phone}`} className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700">
-              <Phone size={14} /> {customer.phone}
-            </a>
+            <div className="flex items-center gap-2">
+              <a href={`tel:${customer.phone}`} className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700">
+                <Phone size={14} /> {customer.phone}
+              </a>
+              <a
+                href={`tel:${customer.phone}`}
+                className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition"
+              >
+                <PhoneCall size={12} />
+                Call
+              </a>
+            </div>
           )}
           {customer?.email && (
             <a href={`mailto:${customer.email}`} className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700 mt-1">
