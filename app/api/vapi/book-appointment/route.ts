@@ -154,12 +154,38 @@ export async function POST(request: NextRequest) {
     const startTime = to24h(win[0]);
     const endTime = to24h(win[1]);
 
-    // Cancel any existing scheduled appointments for this WO
-    await sb
+    // Cancel any existing scheduled appointments for this WO and decrement capacity
+    const { data: oldAppts } = await sb
       .from("appointments")
-      .delete()
+      .select("id, appointment_date, technician_id")
       .eq("work_order_id", wo.id)
       .eq("status", "scheduled");
+
+    for (const oldAppt of oldAppts || []) {
+      // Decrement capacity for the old date
+      const { data: oldCap } = await sb
+        .from("tech_daily_capacity")
+        .select("id, current_appointments, current_repairs")
+        .eq("technician_id", oldAppt.technician_id)
+        .eq("date", oldAppt.appointment_date)
+        .single();
+
+      if (oldCap) {
+        const newCount = Math.max(0, (oldCap.current_appointments || 1) - 1);
+        const newRepairs = isRepair ? Math.max(0, (oldCap.current_repairs || 1) - 1) : oldCap.current_repairs;
+        if (newCount === 0) {
+          await sb.from("tech_daily_capacity").delete().eq("id", oldCap.id);
+        } else {
+          await sb.from("tech_daily_capacity").update({
+            current_appointments: newCount,
+            current_repairs: newRepairs,
+          }).eq("id", oldCap.id);
+        }
+      }
+
+      // Delete the old appointment
+      await sb.from("appointments").delete().eq("id", oldAppt.id);
+    }
 
     // Create appointment
     const { data: appt, error: apptErr } = await sb

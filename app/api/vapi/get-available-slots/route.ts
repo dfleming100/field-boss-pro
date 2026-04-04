@@ -92,6 +92,14 @@ export async function POST(request: NextRequest) {
     // Get time window from ZIP
     const win = ZIP_WINDOWS[zip] || ["9:00am", "12:00pm"];
 
+    // Get this WO's current appointment date (to exclude from available dates)
+    const { data: currentAppts } = await sb
+      .from("appointments")
+      .select("appointment_date")
+      .eq("work_order_id", wo.id)
+      .eq("status", "scheduled");
+    const currentApptDates = new Set((currentAppts || []).map((a: any) => a.appointment_date));
+
     // Fetch tech capacity for next 30 days
     const { data: capacityRows } = await sb
       .from("tech_daily_capacity")
@@ -151,6 +159,9 @@ export async function POST(request: NextRequest) {
       bizDays++;
 
       const ds = dateStr(d);
+
+      // Skip dates where this WO already has an appointment
+      if (currentApptDates.has(ds)) continue;
 
       for (const techName of techsToCheck) {
         const tech = techLookup[techName];
