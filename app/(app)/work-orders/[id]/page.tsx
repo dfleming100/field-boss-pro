@@ -215,6 +215,58 @@ export default function WorkOrderDetailPage() {
     }
   };
 
+  const cancelAppointment = async (apptId: number, apptDate: string, techId: number | null) => {
+    const newStatus = window.prompt(
+      "Cancel this appointment. What status should the work order change to?\n\nOptions: New, Parts Ordered, Parts Have Arrived, Complete\n\nType the status:",
+      "Parts Have Arrived"
+    );
+    if (!newStatus) return;
+
+    const validStatuses = ["New", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
+    if (!validStatuses.includes(newStatus)) {
+      setError("Invalid status. Use: " + validStatuses.join(", "));
+      return;
+    }
+
+    try {
+      // Delete the appointment
+      await supabase.from("appointments").delete().eq("id", apptId);
+
+      // Decrement capacity
+      if (techId) {
+        const { data: cap } = await supabase
+          .from("tech_daily_capacity")
+          .select("id, current_appointments")
+          .eq("technician_id", techId)
+          .eq("date", apptDate)
+          .single();
+
+        if (cap) {
+          const newCount = Math.max(0, (cap.current_appointments || 1) - 1);
+          if (newCount === 0) {
+            await supabase.from("tech_daily_capacity").delete().eq("id", cap.id);
+          } else {
+            await supabase.from("tech_daily_capacity").update({ current_appointments: newCount }).eq("id", cap.id);
+          }
+        }
+      }
+
+      // Update WO status
+      await supabase
+        .from("work_orders")
+        .update({ status: newStatus, service_date: null })
+        .eq("id", workOrderId);
+
+      setStatus(newStatus);
+      setSuccessMsg(`Appointment canceled. Status changed to ${newStatus}.`);
+      setTimeout(() => setSuccessMsg(""), 5000);
+      await fetchWorkOrder();
+      await fetchAppointments();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const createAppointment = async () => {
     if (!serviceDate) {
       setError("Set a service date first");
@@ -521,12 +573,20 @@ export default function WorkOrderDetailPage() {
                           </p>
                         </div>
                       </div>
-                      <Link
-                        href={`/scheduling?date=${appt.appointment_date}`}
-                        className="text-xs text-indigo-600 hover:text-indigo-700"
-                      >
-                        View Schedule
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/scheduling?date=${appt.appointment_date}`}
+                          className="text-xs text-indigo-600 hover:text-indigo-700"
+                        >
+                          View
+                        </Link>
+                        <button
+                          onClick={() => cancelAppointment(appt.id, appt.appointment_date, appt.technician_id)}
+                          className="text-xs text-red-600 hover:text-red-700 font-medium"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
