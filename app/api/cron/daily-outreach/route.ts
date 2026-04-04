@@ -3,17 +3,16 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 /**
  * GET /api/cron/daily-outreach
- * Runs at 9am and 9pm CT — sends SMS to customers with unscheduled work orders.
- * Replicates FA - Daily Outreach n8n workflow logic.
+ * Runs twice daily — sends SMS AND makes Vapi call for each eligible WO.
  *
  * Rules:
- * - Only WOs with status "New" or "Parts Have Arrived"
- * - Skip if outreach_count >= 5
- * - Skip if last outreach was < 10 hours ago
+ * - WOs with status "New" or "Parts Have Arrived"
+ * - 5 day max from first outreach, then stops
+ * - 2 hour gap between attempts
  * - Skip if WO already has a scheduled appointment
- * - Personalized message based on status and outreach count
- *
- * Triggered by Vercel Cron.
+ * - No contact before 8am or after 8:30pm CT
+ * - Each attempt = 1 SMS + 1 Vapi call
+ * - Runs 7 days a week
  */
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
@@ -41,11 +40,23 @@ export async function GET(request: NextRequest) {
       .select(`
         id, tenant_id, work_order_number, status, job_type, appliance_type,
         outreach_count, last_outreach_date, first_outreach_date,
-        customer:customers(customer_name, phone)
+        customer:customers(customer_name, phone, service_address, city, state, zip)
       `)
       .in("status", ["New", "Parts Have Arrived"])
       .order("created_at", { ascending: true })
-      .limit(50);
+      .limit(20);
+
+    // Get Vapi credentials (once, for the tenant)
+    const { data: vapiInt } = await sb
+      .from("tenant_integrations")
+      .select("encrypted_keys")
+      .eq("integration_type", "vapi")
+      .eq("is_configured", true)
+      .limit(1)
+      .single();
+
+    const vapiKeys = (vapiInt?.encrypted_keys as any) || {};
+    const hasVapi = !!(vapiKeys.apiKey && vapiKeys.assistantId);
 
     const results: any[] = [];
 
@@ -58,7 +69,7 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Skip if last outreach (SMS or Vapi) was less than 2 hours ago
+      // Skip if last outreach was less than 2 hours ago
       if (wo.last_outreach_date && new Date(wo.last_outreach_date) > new Date(twoHoursAgo)) {
         continue;
       }
@@ -86,64 +97,93 @@ export async function GET(request: NextRequest) {
       const creds = integration.encrypted_keys as any;
       if (!creds.accountSid || !creds.authToken || !creds.phoneNumber) continue;
 
-      // Build personalized SMS
       const firstName = customer.customer_name?.split(" ")[0] || "there";
       const appliance = wo.appliance_type || "appliance";
       const woNum = wo.work_order_number || "";
-      const count_val = wo.outreach_count || 0;
+      const address = [customer.service_address, customer.city, customer.state].filter(Boolean).join(", ");
+      const phoneDigits = customer.phone.replace(/\D/g, "");
+      const toPhone = phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
+      const basicAuth = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString("base64");
 
+      const result: any = { wo_id: wo.id, wo_number: woNum, to: toPhone, sms: false, vapi: false };
+
+      // ── 1. Send SMS ──
       let smsBody: string;
       if (wo.status === "Parts Have Arrived") {
         smsBody = `Hi ${firstName}, this is Fleming Appliance Repair. Your ${appliance} parts are in (WO #${woNum}). Reply or call (855) 269-3196 to schedule your repair.`;
-      } else if (count_val > 0) {
+      } else if ((wo.outreach_count || 0) > 0) {
         smsBody = `Hi ${firstName}, this is Fleming Appliance Repair following up on your ${appliance} service (WO #${woNum}). Call (855) 269-3196 or reply to schedule.`;
       } else {
         smsBody = `Hi ${firstName}, this is Fleming Appliance Repair. We are ready to schedule your ${appliance} service (WO #${woNum}). Call (855) 269-3196 or reply.`;
       }
 
-      // Send via Twilio
-      const phoneDigits = customer.phone.replace(/\D/g, "");
-      const toPhone = phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
-      const basicAuth = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString("base64");
-
-      const twilioRes = await fetch(
+      const smsRes = await fetch(
         `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Messages.json`,
         {
           method: "POST",
-          headers: {
-            Authorization: `Basic ${basicAuth}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
+          headers: { Authorization: `Basic ${basicAuth}`, "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({ From: creds.phoneNumber, To: toPhone, Body: smsBody }),
         }
       );
+      result.sms = smsRes.ok;
 
-      // Update outreach count (trigger handles last_outreach_date)
-      await sb
-        .from("work_orders")
-        .update({ outreach_count: count_val + 1 })
-        .eq("id", wo.id);
+      // Store SMS in conversation history
+      await sb.from("sms_conversations").insert({ tenant_id: wo.tenant_id, phone: toPhone, direction: "outbound", body: smsBody });
+      await sb.from("sms_logs").insert({ tenant_id: wo.tenant_id, recipient_phone: toPhone, message_type: "daily_outreach", status: smsRes.ok ? "sent" : "failed" });
 
-      // Log
-      await sb.from("sms_logs").insert({
-        tenant_id: wo.tenant_id,
-        recipient_phone: toPhone,
-        message_type: "daily_outreach",
-        status: twilioRes.ok ? "sent" : "failed",
-      });
+      // ── 2. Make Vapi Call ──
+      if (hasVapi) {
+        try {
+          const vapiFirstMessage = wo.status === "Parts Have Arrived"
+            ? `Hi ${firstName}, this is Fleming Appliance Repair calling about your ${appliance} repair at ${address}. Your parts have arrived and we would like to schedule your repair follow-up appointment. We have your work order ${woNum} ready to go. Do you have a moment to pick a date?`
+            : `Hi ${firstName}, this is Fleming Appliance Repair calling about your ${appliance} service at ${address}. We have your work order ${woNum} and would like to schedule your appointment. Do you have a moment to pick a date?`;
 
-      // Store in conversation history
-      await sb.from("sms_conversations").insert({
-        tenant_id: wo.tenant_id,
-        phone: toPhone,
-        direction: "outbound",
-        body: smsBody,
-      });
+          const vapiRes = await fetch("https://api.vapi.ai/call", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${vapiKeys.apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              assistantId: vapiKeys.assistantId,
+              customer: { number: toPhone, name: customer.customer_name },
+              phoneNumberId: vapiKeys.phoneNumberId || undefined,
+              assistantOverrides: {
+                firstMessage: vapiFirstMessage,
+                metadata: {
+                  customer_name: customer.customer_name,
+                  address: address,
+                  work_order_number: woNum,
+                  appliance_type: appliance,
+                  status: wo.status,
+                  job_type: wo.job_type,
+                  outbound: true,
+                },
+              },
+            }),
+          });
 
-      results.push({ wo_id: wo.id, wo_number: woNum, to: toPhone, sent: twilioRes.ok });
+          const vapiData = await vapiRes.json();
+          result.vapi = vapiRes.ok;
+          result.call_id = vapiData.id;
+
+          await sb.from("sms_logs").insert({
+            tenant_id: wo.tenant_id, recipient_phone: toPhone,
+            message_type: "vapi_outreach", status: vapiRes.ok ? "sent" : "failed",
+            twilio_message_id: vapiData.id || null,
+          });
+        } catch (err) {
+          result.vapi_error = (err as Error).message;
+        }
+      }
+
+      // Update outreach count
+      await sb.from("work_orders").update({ outreach_count: (wo.outreach_count || 0) + 1 }).eq("id", wo.id);
+
+      results.push(result);
     }
 
-    return NextResponse.json({ success: true, outreach_sent: results.length, results });
+    return NextResponse.json({ success: true, outreach_sent: results.length, has_vapi: hasVapi, results });
   } catch (error) {
     console.error("Daily outreach error:", error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
