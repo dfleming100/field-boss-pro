@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     let smsBody: string | null = null;
 
     switch (new_status) {
-      case "scheduled": {
+      case "Scheduled": {
         // Fetch the latest appointment for window info
         const { data: appt } = await sb
           .from("appointments")
@@ -99,21 +99,18 @@ export async function POST(request: NextRequest) {
         break;
       }
 
-      case "in_progress":
-        smsBody = `Hi ${firstName}, your ${appliance} technician is on the way to ${address}. They should arrive within your scheduled window. - Fleming Appliance`;
-        break;
-
-      case "completed":
+      case "Complete":
         smsBody = `Hi ${firstName}, your ${appliance} ${jobLabel} at ${address} is complete. Thank you for choosing Fleming Appliance! We will follow up shortly for your feedback.`;
         break;
 
-      case "ready_to_schedule":
+      case "Parts Have Arrived":
         smsBody = `Hi ${firstName}, your ${appliance} parts have arrived (WO #${woNum}). Reply or call (855) 269-3196 to schedule your repair. - Fleming Appliance`;
         break;
 
-      case "canceled":
-        smsBody = `Hi ${firstName}, your ${appliance} service (WO #${woNum}) has been canceled. If you need anything, call us at (855) 269-3196. - Fleming Appliance`;
+      case "Parts Ordered":
+        smsBody = `Hi ${firstName}, parts for your ${appliance} have been ordered (WO #${woNum}). We will contact you when they arrive to schedule your repair. - Fleming Appliance`;
         break;
+
     }
 
     if (!smsBody) {

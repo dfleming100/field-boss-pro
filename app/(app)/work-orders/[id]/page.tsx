@@ -21,15 +21,14 @@ import {
 } from "lucide-react";
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
-  draft: { label: "Draft", bg: "bg-gray-100", text: "text-gray-700", dot: "bg-gray-400" },
-  ready_to_schedule: { label: "Ready to Schedule", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
-  scheduled: { label: "Scheduled", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500" },
-  in_progress: { label: "In Progress", bg: "bg-yellow-100", text: "text-yellow-700", dot: "bg-yellow-500" },
-  completed: { label: "Completed", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
-  canceled: { label: "Canceled", bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500" },
+  "New": { label: "New", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
+  "Parts Ordered": { label: "Parts Ordered", bg: "bg-amber-100", text: "text-amber-700", dot: "bg-amber-500" },
+  "Parts Have Arrived": { label: "Parts Arrived", bg: "bg-teal-100", text: "text-teal-700", dot: "bg-teal-500" },
+  "Scheduled": { label: "Scheduled", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500" },
+  "Complete": { label: "Complete", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
 };
 
-const statusOptions = ["draft", "ready_to_schedule", "scheduled", "in_progress", "completed", "canceled"];
+const statusOptions = ["New", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
 
 interface ApplianceDetails {
   make: string;
@@ -66,7 +65,7 @@ export default function WorkOrderDetailPage() {
   const [appointments, setAppointments] = useState<any[]>([]);
 
   // Form state
-  const [status, setStatus] = useState("draft");
+  const [status, setStatus] = useState("New");
   const [assignedTechId, setAssignedTechId] = useState("");
   const [serviceDate, setServiceDate] = useState("");
   const [startTime, setStartTime] = useState("09:00");
@@ -99,7 +98,7 @@ export default function WorkOrderDetailPage() {
 
       if (fetchError) throw fetchError;
       setWorkOrder(data);
-      setStatus(data.status || "draft");
+      setStatus(data.status || "New");
       setAssignedTechId(data.assigned_technician_id || "");
       setServiceDate(data.service_date || "");
       setNotes(data.notes || "");
@@ -265,7 +264,7 @@ export default function WorkOrderDetailPage() {
   }
 
   const customer = workOrder.customer;
-  const statusCfg = STATUS_CONFIG[workOrder.status] || STATUS_CONFIG.draft;
+  const statusCfg = STATUS_CONFIG[workOrder.status] || STATUS_CONFIG["New"];
 
   return (
     <div>

@@ -53,24 +53,15 @@ select {
 .badge-new {
   @apply bg-blue-100 text-blue-700;
 }
-.badge-open {
-  @apply bg-orange-100 text-orange-700;
+.badge-parts-ordered {
+  @apply bg-amber-100 text-amber-700;
+}
+.badge-parts-arrived {
+  @apply bg-teal-100 text-teal-700;
 }
 .badge-scheduled {
   @apply bg-purple-100 text-purple-700;
 }
-.badge-in-progress {
-  @apply bg-yellow-100 text-yellow-700;
-}
-.badge-completed {
+.badge-complete {
   @apply bg-green-100 text-green-700;
-}
-.badge-closed {
-  @apply bg-green-100 text-green-700;
-}
-.badge-canceled {
-  @apply bg-gray-100 text-gray-600;
-}
-.badge-draft {
-  @apply bg-gray-100 text-gray-600;
 }

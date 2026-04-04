@@ -34,23 +34,19 @@ interface StatusChangePayload {
 // SMS templates based on status transitions
 const SMS_TEMPLATES: Record<string, (ctx: any) => string> = {
   // When appointment is booked
-  scheduled: (ctx) =>
+  "Scheduled": (ctx) =>
     `Hi ${ctx.first_name}, your ${ctx.appliance} ${ctx.job_type_label} at ${ctx.address} is confirmed for ${ctx.service_date_display} between ${ctx.window}. See you then! - Fleming Appliance`,
 
-  // When tech is on the way
-  in_progress: (ctx) =>
-    `Hi ${ctx.first_name}, your ${ctx.appliance} technician is on the way to ${ctx.address}. They should arrive within your scheduled window. - Fleming Appliance`,
-
   // When job is completed
-  completed: (ctx) =>
+  "Complete": (ctx) =>
     `Hi ${ctx.first_name}, your ${ctx.appliance} service at ${ctx.address} is complete. Thank you for choosing Fleming Appliance! We will follow up shortly.`,
 
   // When parts are ordered
-  parts_ordered: (ctx) =>
+  "Parts Ordered": (ctx) =>
     `Hi ${ctx.first_name}, parts for your ${ctx.appliance} at ${ctx.address} have been ordered. We will contact you when they arrive to schedule your repair. - Fleming Appliance`,
 
   // When parts arrive
-  parts_arrived: (ctx) =>
+  "Parts Have Arrived": (ctx) =>
     `Hi ${ctx.first_name}, great news! Your ${ctx.appliance} parts have arrived. Reply or call (855) 269-3196 to schedule your repair. - Fleming Appliance`,
 };
 
@@ -102,7 +98,7 @@ serve(async (req: Request) => {
     // Fetch appointment for window info if scheduled
     let windowLabel = "";
     let serviceDateDisplay = "";
-    if (newStatus === "scheduled" && record.service_date) {
+    if (newStatus === "Scheduled" && record.service_date) {
       const { data: appt } = await supabase
         .from("appointments")
         .select("start_time, end_time, appointment_date")
@@ -133,15 +129,8 @@ serve(async (req: Request) => {
       wo_number: record.work_order_number,
     };
 
-    // Map n8n-style statuses to our template keys
-    const statusMap: Record<string, string> = {
-      scheduled: "scheduled",
-      in_progress: "in_progress",
-      completed: "completed",
-    };
-
-    const templateKey = statusMap[newStatus];
-    const template = templateKey ? SMS_TEMPLATES[templateKey] : null;
+    // Template lookup — keys now match n8n/Airtable status values directly
+    const template = SMS_TEMPLATES[newStatus] || null;
 
     const actions: string[] = [];
 

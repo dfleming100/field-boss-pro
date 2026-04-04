@@ -50,12 +50,11 @@ interface TodayAppt {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-700",
-  ready_to_schedule: "bg-blue-100 text-blue-700",
-  scheduled: "bg-purple-100 text-purple-700",
-  in_progress: "bg-yellow-100 text-yellow-700",
-  completed: "bg-green-100 text-green-700",
-  canceled: "bg-red-100 text-red-700",
+  "New": "bg-blue-100 text-blue-700",
+  "Parts Ordered": "bg-amber-100 text-amber-700",
+  "Parts Have Arrived": "bg-teal-100 text-teal-700",
+  "Scheduled": "bg-purple-100 text-purple-700",
+  "Complete": "bg-green-100 text-green-700",
 };
 
 export default function DashboardPage() {
@@ -79,9 +78,9 @@ export default function DashboardPage() {
       recentRes, apptRes,
     ] = await Promise.all([
       supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid),
-      supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid).in("status", ["draft", "ready_to_schedule", "scheduled", "in_progress"]),
+      supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid).in("status", ["New", "Parts Ordered", "Parts Have Arrived", "Scheduled"]),
       supabase.from("appointments").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("appointment_date", today),
-      supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("status", "completed").gte("updated_at", weekAgo),
+      supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("status", "Complete").gte("updated_at", weekAgo),
       supabase.from("customers").select("id", { count: "exact", head: true }).eq("tenant_id", tid),
       supabase.from("technicians").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("is_active", true),
       supabase.from("leads").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("status", "new"),
@@ -117,8 +116,7 @@ export default function DashboardPage() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  const formatStatus = (s: string) =>
-    s.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const formatStatus = (s: string) => s;
 
   const formatTime = (t: string | null) => {
     if (!t) return "";

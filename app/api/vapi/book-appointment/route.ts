@@ -173,11 +173,11 @@ export async function POST(request: NextRequest) {
       return wrapResponse(toolCallId, { success: false, error: apptErr.message });
     }
 
-    // Update WO status to scheduled
+    // Update WO status to Scheduled
     await sb
       .from("work_orders")
       .update({
-        status: "scheduled",
+        status: "Scheduled",
         assigned_technician_id: techId,
         service_date: chosenDate,
       })
@@ -214,7 +214,7 @@ export async function POST(request: NextRequest) {
           work_order_id: wo.id,
           tenant_id: wo.tenant_id,
           old_status: wo.status,
-          new_status: "scheduled",
+          new_status: "Scheduled",
         }),
       });
     } catch {

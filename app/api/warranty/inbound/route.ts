@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
         job_type: job_type || "Diagnosis",
         appliance_type: appliance_type || null,
         description: description || null,
-        status: "draft",
+        status: "New",
         warranty_company: warranty_company || null,
         warranty_wo_number: warranty_wo_number || null,
         outreach_count: 0,

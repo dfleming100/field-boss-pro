@@ -37,23 +37,21 @@ interface WorkOrder {
 
 type StatusFilter =
   | "all"
-  | "draft"
-  | "ready_to_schedule"
-  | "scheduled"
-  | "in_progress"
-  | "completed"
-  | "canceled";
+  | "New"
+  | "Parts Ordered"
+  | "Parts Have Arrived"
+  | "Scheduled"
+  | "Complete";
 
 const STATUS_CONFIG: Record<
   string,
   { label: string; bg: string; text: string; dot: string }
 > = {
-  draft: { label: "Draft", bg: "bg-gray-100", text: "text-gray-700", dot: "bg-gray-400" },
-  ready_to_schedule: { label: "Ready", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
-  scheduled: { label: "Scheduled", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500" },
-  in_progress: { label: "In Progress", bg: "bg-yellow-100", text: "text-yellow-700", dot: "bg-yellow-500" },
-  completed: { label: "Completed", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
-  canceled: { label: "Canceled", bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500" },
+  "New": { label: "New", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
+  "Parts Ordered": { label: "Parts Ordered", bg: "bg-amber-100", text: "text-amber-700", dot: "bg-amber-500" },
+  "Parts Have Arrived": { label: "Parts Arrived", bg: "bg-teal-100", text: "text-teal-700", dot: "bg-teal-500" },
+  "Scheduled": { label: "Scheduled", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500" },
+  "Complete": { label: "Complete", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
 };
 
 function WorkOrdersContent() {
@@ -131,13 +129,13 @@ function WorkOrdersContent() {
 
   // Counts
   const newCount = workOrders.filter((wo) =>
-    ["draft", "ready_to_schedule"].includes(wo.status)
+    ["New"].includes(wo.status)
   ).length;
   const openCount = workOrders.filter((wo) =>
-    ["scheduled", "in_progress"].includes(wo.status)
+    ["Parts Ordered", "Parts Have Arrived", "Scheduled"].includes(wo.status)
   ).length;
   const closedCount = workOrders.filter((wo) =>
-    ["completed", "canceled"].includes(wo.status)
+    ["Complete"].includes(wo.status)
   ).length;
 
   // Selection
@@ -236,9 +234,9 @@ function WorkOrdersContent() {
       {/* Status Counters */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         <button
-          onClick={() => setStatusFilter(statusFilter === "all" ? "draft" : "all")}
+          onClick={() => setStatusFilter(statusFilter === "all" ? "New" : "all")}
           className={`bg-white rounded-xl border p-4 text-left transition-all ${
-            ["draft", "ready_to_schedule"].includes(statusFilter)
+            statusFilter === "New"
               ? "border-blue-300 ring-2 ring-blue-100"
               : "border-gray-200 hover:border-blue-200"
           }`}
@@ -251,10 +249,10 @@ function WorkOrdersContent() {
         </button>
         <button
           onClick={() =>
-            setStatusFilter(statusFilter === "scheduled" ? "all" : "scheduled")
+            setStatusFilter(statusFilter === "Scheduled" ? "all" : "Scheduled")
           }
           className={`bg-white rounded-xl border p-4 text-left transition-all ${
-            ["scheduled", "in_progress"].includes(statusFilter)
+            ["Parts Ordered", "Parts Have Arrived", "Scheduled"].includes(statusFilter)
               ? "border-orange-300 ring-2 ring-orange-100"
               : "border-gray-200 hover:border-orange-200"
           }`}
@@ -267,10 +265,10 @@ function WorkOrdersContent() {
         </button>
         <button
           onClick={() =>
-            setStatusFilter(statusFilter === "completed" ? "all" : "completed")
+            setStatusFilter(statusFilter === "Complete" ? "all" : "Complete")
           }
           className={`bg-white rounded-xl border p-4 text-left transition-all ${
-            ["completed", "canceled"].includes(statusFilter)
+            statusFilter === "Complete"
               ? "border-green-300 ring-2 ring-green-100"
               : "border-gray-200 hover:border-green-200"
           }`}
@@ -338,12 +336,11 @@ function WorkOrdersContent() {
               {(
                 [
                   "all",
-                  "draft",
-                  "ready_to_schedule",
-                  "scheduled",
-                  "in_progress",
-                  "completed",
-                  "canceled",
+                  "New",
+                  "Parts Ordered",
+                  "Parts Have Arrived",
+                  "Scheduled",
+                  "Complete",
                 ] as const
               ).map((s) => (
                 <button
@@ -438,7 +435,7 @@ function WorkOrdersContent() {
             <tbody className="divide-y divide-gray-100">
               {filteredOrders.map((wo) => {
                 const appt = getNextAppointment(wo);
-                const statusCfg = STATUS_CONFIG[wo.status] || STATUS_CONFIG.draft;
+                const statusCfg = STATUS_CONFIG[wo.status] || STATUS_CONFIG["New"];
 
                 return (
                   <tr

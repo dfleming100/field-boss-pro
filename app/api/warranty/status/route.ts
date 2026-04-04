@@ -47,22 +47,16 @@ export async function POST(request: NextRequest) {
     // Map warranty company statuses to Field Boss statuses
     const STATUS_MAP: Record<string, string> = {
       // AHS statuses → Field Boss statuses
-      "New": "draft",
-      "Assigned": "draft",
-      "Scheduling": "ready_to_schedule",
-      "Parts Ordered": "ready_to_schedule",
-      "Parts Have Arrived": "ready_to_schedule",
-      "Scheduled": "scheduled",
-      "In Progress": "in_progress",
-      "Completed": "completed",
-      "Canceled": "canceled",
-      // Also accept Field Boss native statuses
-      "draft": "draft",
-      "ready_to_schedule": "ready_to_schedule",
-      "scheduled": "scheduled",
-      "in_progress": "in_progress",
-      "completed": "completed",
-      "canceled": "canceled",
+      "New": "New",
+      "Assigned": "New",
+      "Scheduling": "New",
+      "Parts Ordered": "Parts Ordered",
+      "Parts Have Arrived": "Parts Have Arrived",
+      "Scheduled": "Scheduled",
+      "In Progress": "Scheduled",
+      "Completed": "Complete",
+      "Complete": "Complete",
+      "Canceled": "Complete",
     };
 
     const mappedStatus = STATUS_MAP[new_status] || new_status;

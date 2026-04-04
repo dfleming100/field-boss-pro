@@ -38,7 +38,7 @@ function expandAddress(s: string): string {
     .replace(/\bS\b/g, "South").replace(/\bE\b/g, "East").replace(/\bW\b/g, "West");
 }
 
-const STATUS_PRIORITY = ["Parts Have Arrived", "ready_to_schedule", "Parts Ordered", "Scheduling", "draft", "New", "scheduled"];
+const STATUS_PRIORITY = ["Parts Have Arrived", "Parts Ordered", "New", "Scheduled"];
 
 export async function POST(request: NextRequest) {
   try {
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
       `)
       .eq("customer_id", customer.id)
       .eq("tenant_id", customer.tenant_id)
-      .not("status", "in", '("completed","canceled")')
+      .not("status", "in", '("Complete")')
       .order("created_at", { ascending: false });
 
     // Find active WO by status priority
@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
     let message = `Customer: ${customer.customer_name}. Address: ${addr}.`;
     if (activeWO) {
       message += ` Active work order ${activeWO.wo_number}: ${activeWO.appliance_type}. Status: ${activeWO.status}.`;
-      if (activeWO.status === "scheduled" && activeWO.tech_name) {
+      if (activeWO.status === "Scheduled" && activeWO.tech_name) {
         message += ` Assigned to ${activeWO.tech_name}.`;
       }
     } else {
@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
 
     // If scheduled, fetch appointment details
     let enrichedAppt: any = null;
-    if (activeWO?.status === "scheduled" && activeWO.appointment_id) {
+    if (activeWO?.status === "Scheduled" && activeWO.appointment_id) {
       const { data: appt } = await sb
         .from("appointments")
         .select("appointment_date, start_time, end_time")
@@ -173,7 +173,7 @@ export async function POST(request: NextRequest) {
           window_end: appt.end_time,
         };
         message = message.replace(
-          "Status: scheduled.",
+          "Status: Scheduled.",
           `Status: Scheduled for ${dateDisplay} between ${appt.start_time} and ${appt.end_time} with ${activeWO.tech_name}.`
         );
       }

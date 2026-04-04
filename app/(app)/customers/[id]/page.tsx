@@ -50,12 +50,11 @@ interface Appointment {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-700",
-  ready_to_schedule: "bg-blue-100 text-blue-700",
-  scheduled: "bg-purple-100 text-purple-700",
-  in_progress: "bg-yellow-100 text-yellow-700",
-  completed: "bg-green-100 text-green-700",
-  canceled: "bg-red-100 text-red-700",
+  "New": "bg-blue-100 text-blue-700",
+  "Parts Ordered": "bg-amber-100 text-amber-700",
+  "Parts Have Arrived": "bg-teal-100 text-teal-700",
+  "Scheduled": "bg-purple-100 text-purple-700",
+  "Complete": "bg-green-100 text-green-700",
 };
 
 export default function CustomerPage() {
@@ -190,8 +189,7 @@ export default function CustomerPage() {
     }
   };
 
-  const formatStatus = (s: string) =>
-    s.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const formatStatus = (s: string) => s;
 
   if (isLoading) {
     return (
@@ -327,7 +325,7 @@ export default function CustomerPage() {
             </div>
             <div>
               <p className="text-gray-500">Completed</p>
-              <p className="text-lg font-bold text-green-600">{workOrders.filter((w) => w.status === "completed").length}</p>
+              <p className="text-lg font-bold text-green-600">{workOrders.filter((w) => w.status === "Complete").length}</p>
             </div>
           </div>
         </div>

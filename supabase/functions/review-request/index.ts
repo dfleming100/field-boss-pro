@@ -29,7 +29,7 @@ serve(async (req: Request) => {
     const { data: unstamped } = await supabase
       .from("work_orders")
       .select("id")
-      .eq("status", "completed")
+      .eq("status", "Complete")
       .is("completed_date", null)
       .limit(50);
 
@@ -51,7 +51,7 @@ serve(async (req: Request) => {
         id, tenant_id, work_order_number, appliance_type,
         customer:customers(customer_name, phone)
       `)
-      .eq("status", "completed")
+      .eq("status", "Complete")
       .eq("review_requested", false)
       .not("completed_date", "is", null)
       .lt("completed_date", threeHoursAgo)

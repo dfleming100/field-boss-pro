@@ -94,7 +94,7 @@ export default function NewWorkOrderPage() {
           .map((v) => v.trim())
           .filter(Boolean),
         notes: form.notes || null,
-        status: form.service_date ? "scheduled" : "draft",
+        status: "New",
         service_date: form.service_date || null,
       });
 

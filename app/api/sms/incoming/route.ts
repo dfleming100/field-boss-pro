@@ -192,9 +192,11 @@ SCHEDULING DATA:
 - Agent Summary: ${slots?.agent_summary || ""}
 
 RULES:
-- Status "ready_to_schedule" means "Parts Have Arrived" — tell customer their parts are in and offer to schedule
-- Status "scheduled" means they already have an appointment — tell them their appointment details first
-- Status "draft" or "New" means new work order — offer to schedule
+- Status "Parts Have Arrived" means parts are in — tell customer their parts are in and offer to schedule
+- Status "Parts Ordered" means parts are on the way — tell customer parts have been ordered and we will contact them when they arrive
+- Status "Scheduled" means they already have an appointment — tell them their appointment details first
+- Status "New" means new work order — offer to schedule
+- Status "Complete" means work is finished — no scheduling needed
 - The time window is FIXED based on ZIP code and CANNOT be changed
 - Keep SMS replies to 2-3 sentences max
 - Do NOT use contractions

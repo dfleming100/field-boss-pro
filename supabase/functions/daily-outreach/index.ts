@@ -29,7 +29,7 @@ serve(async (req: Request) => {
       // No body, run for all tenants
     }
 
-    // Fetch eligible work orders: status New or ready_to_schedule,
+    // Fetch eligible work orders: status New or Parts Have Arrived,
     // outreach_count < 5, last outreach > 10 hours ago (or never)
     const tenHoursAgo = new Date(Date.now() - 10 * 3600 * 1000).toISOString();
 
@@ -40,7 +40,7 @@ serve(async (req: Request) => {
         outreach_count, last_outreach_date, first_outreach_date,
         customer:customers(customer_name, phone, service_address)
       `)
-      .in("status", ["draft", "ready_to_schedule", "New", "Parts Have Arrived"])
+      .in("status", ["New", "Parts Have Arrived"])
       .lt("outreach_count", 5)
       .order("created_at", { ascending: true })
       .limit(50);

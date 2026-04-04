@@ -149,7 +149,7 @@ function SchedulingContent() {
         .from("work_orders")
         .select(`*, customer:customers(customer_name, service_address, city, state)`)
         .eq("tenant_id", tenantUser.tenant_id)
-        .in("status", ["draft", "ready_to_schedule"])
+        .in("status", ["New", "Parts Ordered", "Parts Have Arrived"])
         .order("created_at", { ascending: false })
         .limit(20),
     ]);
