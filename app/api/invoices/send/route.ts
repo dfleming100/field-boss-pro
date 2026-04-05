@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: `${tenantName} <invoices@field-boss-pro.vercel.app>`,
+            from: `${tenantName} <noreply@fieldbosspro.com>`,
             to: customer.email,
             subject: `Invoice ${invoice.invoice_number} — ${total}`,
             html: `
