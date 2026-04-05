@@ -10,6 +10,7 @@ import {
   Mic,
   CreditCard,
   Megaphone,
+  DollarSign,
   Bot,
   CheckCircle2,
   AlertCircle,
@@ -42,6 +43,13 @@ const emptyTwilio: TwilioConfig = { accountSid: "", authToken: "", phoneNumber: 
 const emptyVapi: VapiConfig = { apiKey: "", phoneNumberId: "", assistantId: "" };
 const emptyAnthropic: AnthropicConfig = { apiKey: "" };
 
+interface StripeConfig {
+  connectAccountId: string;
+  publishableKey: string;
+  secretKey: string;
+}
+const emptyStripe: StripeConfig = { connectAccountId: "", publishableKey: "", secretKey: "" };
+
 export default function TenantIntegrationPage() {
   const router = useRouter();
   const params = useParams();
@@ -59,6 +67,7 @@ export default function TenantIntegrationPage() {
   const [twilio, setTwilio] = useState<TwilioConfig>(emptyTwilio);
   const [vapi, setVapi] = useState<VapiConfig>(emptyVapi);
   const [anthropic, setAnthropic] = useState<AnthropicConfig>(emptyAnthropic);
+  const [stripeConfig, setStripeConfig] = useState<StripeConfig>(emptyStripe);
 
   // Show/hide secrets
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
@@ -76,6 +85,9 @@ export default function TenantIntegrationPage() {
         .single();
 
       setTenant(tenantData);
+      if (tenantData?.stripe_connect_account_id) {
+        setStripeConfig((prev) => ({ ...prev, connectAccountId: tenantData.stripe_connect_account_id }));
+      }
 
       // Fetch all integrations for this tenant
       const { data: integrations } = await supabase
@@ -105,6 +117,13 @@ export default function TenantIntegrationPage() {
             break;
           case "anthropic":
             setAnthropic({ apiKey: keys.apiKey || "" });
+            break;
+          case "stripe":
+            setStripeConfig({
+              connectAccountId: keys.connectAccountId || "",
+              publishableKey: keys.publishableKey || "",
+              secretKey: keys.secretKey || "",
+            });
             break;
         }
       }
@@ -212,6 +231,7 @@ export default function TenantIntegrationPage() {
     { id: "twilio", label: "Twilio", icon: Phone, configured: !!twilio.accountSid },
     { id: "vapi", label: "Vapi", icon: Mic, configured: !!vapi.apiKey },
     { id: "anthropic", label: "AI (Claude)", icon: Bot, configured: !!anthropic.apiKey },
+    { id: "stripe", label: "Stripe", icon: CreditCard, configured: !!stripeConfig.connectAccountId },
     { id: "webhooks", label: "Webhooks", icon: Megaphone, configured: true },
   ];
 
@@ -465,6 +485,64 @@ export default function TenantIntegrationPage() {
           >
             <Save size={16} />
             {isSaving ? "Saving..." : "Save AI Configuration"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Stripe Tab ── */}
+      {activeTab === "stripe" && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Stripe Connect</h2>
+            <p className="text-sm text-gray-500 mb-4">Connect the tenant&apos;s Stripe account so they can collect payments from their customers</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Connect Account ID</label>
+                <input
+                  type="text"
+                  value={stripeConfig.connectAccountId}
+                  onChange={(e) => setStripeConfig({ ...stripeConfig, connectAccountId: e.target.value })}
+                  placeholder="acct_xxxxxxxxxxxxxxxxxx"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono"
+                />
+                <p className="text-xs text-gray-400 mt-1">From Stripe Dashboard → Connect → Accounts, or created via the Connect onboarding flow</p>
+              </div>
+              <SecretField
+                label="Publishable Key" value={stripeConfig.publishableKey}
+                onChange={(v) => setStripeConfig({ ...stripeConfig, publishableKey: v })}
+                placeholder="pk_live_..." fieldKey="stripePk"
+                helpText="Stripe Dashboard → Developers → API Keys"
+              />
+              <SecretField
+                label="Secret Key" value={stripeConfig.secretKey}
+                onChange={(v) => setStripeConfig({ ...stripeConfig, secretKey: v })}
+                placeholder="sk_live_..." fieldKey="stripeSk"
+                helpText="Keep this private ��� never share it"
+              />
+            </div>
+          </div>
+
+          {stripeConfig.connectAccountId && (
+            <div className="bg-green-50 rounded-xl border border-green-200 p-4 flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-green-600" />
+              <span className="text-sm text-green-700 font-medium">Stripe Connected — payments route to this account</span>
+            </div>
+          )}
+
+          <button
+            onClick={async () => {
+              // Save to tenant_integrations
+              await saveIntegration("stripe", stripeConfig as any);
+              // Also update the tenants table connect account ID
+              if (stripeConfig.connectAccountId) {
+                await supabase.from("tenants").update({ stripe_connect_account_id: stripeConfig.connectAccountId }).eq("id", tenantId);
+              }
+            }}
+            disabled={isSaving}
+            className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+          >
+            <Save size={16} />
+            {isSaving ? "Saving..." : "Save Stripe Configuration"}
           </button>
         </div>
       )}
