@@ -47,7 +47,7 @@ export default function InvoiceDetailPage() {
     const [invRes, itemsRes] = await Promise.all([
       supabase
         .from("invoices")
-        .select(`*, customer:customers(*), work_order:work_orders(work_order_number, appliance_type)`)
+        .select(`*, customer:customers(*), work_order:work_orders(work_order_number, appliance_type), tenant:tenants(name, contact_phone, contact_email)`)
         .eq("id", invoiceId)
         .single(),
       supabase
@@ -219,6 +219,7 @@ export default function InvoiceDetailPage() {
 
   const customer = invoice.customer;
   const wo = invoice.work_order;
+  const tenant = invoice.tenant;
 
   const STATUS_COLORS: Record<string, string> = {
     draft: "bg-gray-100 text-gray-700",
@@ -302,8 +303,9 @@ export default function InvoiceDetailPage() {
         <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-gray-200">
           <div>
             <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">From</h3>
-            <p className="text-sm font-semibold text-gray-900">Fleming Appliance Repair</p>
-            <p className="text-sm text-gray-500">(855) 269-3196</p>
+            <p className="text-sm font-semibold text-gray-900">{tenant?.name || "Company"}</p>
+            {tenant?.contact_phone && <p className="text-sm text-gray-500">{tenant.contact_phone}</p>}
+            {tenant?.contact_email && <p className="text-sm text-gray-500">{tenant.contact_email}</p>}
           </div>
           <div>
             <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">Bill To</h3>

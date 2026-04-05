@@ -72,6 +72,7 @@ export default function PublicInvoicePage() {
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">{tenant?.name || "Invoice"}</h1>
           {tenant?.contact_phone && <p className="text-sm text-gray-500">{tenant.contact_phone}</p>}
+          {tenant?.contact_email && <p className="text-sm text-gray-500">{tenant.contact_email}</p>}
         </div>
 
         {isPaid && (

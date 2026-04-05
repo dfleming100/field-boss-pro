@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
                   View & Pay Invoice
                 </a>
                 <p style="color: #64748b; font-size: 12px; margin-top: 24px;">
-                  ${tenantName}${tenant?.contact_phone ? ` • ${tenant.contact_phone}` : ""}
+                  ${tenantName}${tenant?.contact_phone ? ` • ${tenant.contact_phone}` : ""}${tenant?.contact_email ? ` • ${tenant.contact_email}` : ""}
                 </p>
               </div>
             `,
