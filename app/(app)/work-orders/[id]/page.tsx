@@ -374,15 +374,13 @@ export default function WorkOrderDetailPage() {
           <Save size={16} />
           {isSaving ? "Saving..." : "Save Changes"}
         </button>
-        {workOrder?.status === "Complete" && (
-          <Link
-            href={`/invoices/new?wo=${workOrderId}`}
-            className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 shadow-sm"
-          >
-            <FileText size={16} />
-            Create Invoice
-          </Link>
-        )}
+        <Link
+          href={`/invoices/new?wo=${workOrderId}`}
+          className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 shadow-sm"
+        >
+          <FileText size={16} />
+          Create Invoice
+        </Link>
       </div>
 
       {error && (

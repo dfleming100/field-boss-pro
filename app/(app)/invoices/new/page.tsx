@@ -41,7 +41,7 @@ function NewInvoiceContent() {
 
     const [custRes, woRes, tenantRes] = await Promise.all([
       supabase.from("customers").select("id, customer_name, state").eq("tenant_id", tenantUser.tenant_id).order("customer_name"),
-      supabase.from("work_orders").select("id, work_order_number, customer_id, appliance_type, job_type").eq("tenant_id", tenantUser.tenant_id).eq("status", "Complete").order("created_at", { ascending: false }),
+      supabase.from("work_orders").select("id, work_order_number, customer_id, appliance_type, job_type, status").eq("tenant_id", tenantUser.tenant_id).order("created_at", { ascending: false }),
       supabase.from("tenants").select("custom_tax_rate, tax_enabled_default").eq("id", tenantUser.tenant_id).single(),
     ]);
 
