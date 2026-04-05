@@ -29,6 +29,9 @@ function NewInvoiceContent() {
   const [diagnosisWaived, setDiagnosisWaived] = useState(false);
   const [laborFee, setLaborFee] = useState(125);
   const [items, setItems] = useState<LineItem[]>([]);
+  const [taxEnabled, setTaxEnabled] = useState(false);
+  const [taxRate, setTaxRate] = useState(0);
+  const [taxLabel, setTaxLabel] = useState("");
   const [notes, setNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
@@ -36,13 +39,21 @@ function NewInvoiceContent() {
   const fetchData = useCallback(async () => {
     if (!tenantUser) return;
 
-    const [custRes, woRes] = await Promise.all([
-      supabase.from("customers").select("id, customer_name").eq("tenant_id", tenantUser.tenant_id).order("customer_name"),
+    const [custRes, woRes, tenantRes] = await Promise.all([
+      supabase.from("customers").select("id, customer_name, state").eq("tenant_id", tenantUser.tenant_id).order("customer_name"),
       supabase.from("work_orders").select("id, work_order_number, customer_id, appliance_type, job_type").eq("tenant_id", tenantUser.tenant_id).eq("status", "Complete").order("created_at", { ascending: false }),
+      supabase.from("tenants").select("custom_tax_rate, tax_enabled_default").eq("id", tenantUser.tenant_id).single(),
     ]);
 
     if (custRes.data) setCustomers(custRes.data);
     if (woRes.data) setWorkOrders(woRes.data);
+    if (tenantRes.data) {
+      setTaxEnabled(tenantRes.data.tax_enabled_default || false);
+      if (tenantRes.data.custom_tax_rate) {
+        setTaxRate(Number(tenantRes.data.custom_tax_rate));
+        setTaxLabel("Custom rate");
+      }
+    }
 
     // Auto-fill from WO if provided
     if (woId && woRes.data) {
@@ -68,6 +79,25 @@ function NewInvoiceContent() {
     }
   }, [workOrderId, workOrders]);
 
+  // When customer changes, look up state tax rate
+  useEffect(() => {
+    if (!customerId) return;
+    const cust = customers.find((c) => String(c.id) === customerId);
+    if (cust?.state) {
+      supabase
+        .from("state_tax_rates")
+        .select("rate, state_name")
+        .eq("state_code", cust.state.toUpperCase())
+        .single()
+        .then(({ data }) => {
+          if (data) {
+            setTaxRate(Number(data.rate));
+            setTaxLabel(`${data.state_name} (${(Number(data.rate) * 100).toFixed(2)}%)`);
+          }
+        });
+    }
+  }, [customerId, customers]);
+
   const addItem = () => {
     setItems([...items, { id: Date.now().toString(), description: "", quantity: 1, unit_price: 0, item_type: "part" }]);
   };
@@ -83,7 +113,8 @@ function NewInvoiceContent() {
   const partsTotal = items.reduce((sum, i) => sum + i.quantity * i.unit_price, 0);
   const diagnosisAmount = diagnosisWaived ? 0 : diagnosisFee;
   const subtotal = diagnosisAmount + laborFee + partsTotal;
-  const total = subtotal;
+  const taxAmount = taxEnabled ? subtotal * taxRate : 0;
+  const total = subtotal + taxAmount;
 
   const formatCurrency = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
@@ -107,8 +138,9 @@ function NewInvoiceContent() {
           labor_fee: laborFee,
           diagnosis_waived: diagnosisWaived,
           subtotal,
-          tax_rate: 0,
-          tax_amount: 0,
+          tax_enabled: taxEnabled,
+          tax_rate: taxEnabled ? taxRate : 0,
+          tax_amount: taxAmount,
           total,
           notes,
         })
@@ -282,6 +314,37 @@ function NewInvoiceContent() {
           />
         </div>
 
+        {/* Tax Toggle */}
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-gray-900">Sales Tax</h2>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={taxEnabled}
+                onChange={(e) => setTaxEnabled(e.target.checked)}
+                className="rounded border-gray-300 text-indigo-600 w-5 h-5"
+              />
+              <span className="text-sm font-medium text-gray-700">{taxEnabled ? "On" : "Off"}</span>
+            </label>
+          </div>
+          {taxEnabled && (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-500">{taxLabel || "Tax rate"}</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={(taxRate * 100).toFixed(2)}
+                  onChange={(e) => setTaxRate(parseFloat(e.target.value) / 100 || 0)}
+                  className="w-20 px-3 py-1.5 text-sm border border-gray-300 rounded-lg text-right"
+                  step="0.01"
+                />
+                <span className="text-sm text-gray-500">%</span>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Total */}
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <div className="space-y-2 text-sm">
@@ -297,6 +360,16 @@ function NewInvoiceContent() {
               <div className="flex justify-between">
                 <span className="text-gray-500">Parts ({items.length} item{items.length !== 1 ? "s" : ""})</span>
                 <span className="text-gray-900">{formatCurrency(partsTotal)}</span>
+              </div>
+            )}
+            <div className="flex justify-between border-t border-gray-200 pt-2">
+              <span className="text-gray-500">Subtotal</span>
+              <span className="text-gray-900 font-medium">{formatCurrency(subtotal)}</span>
+            </div>
+            {taxEnabled && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Tax ({(taxRate * 100).toFixed(2)}%)</span>
+                <span className="text-gray-900">{formatCurrency(taxAmount)}</span>
               </div>
             )}
             <div className="flex justify-between border-t border-gray-200 pt-2 text-lg font-bold">

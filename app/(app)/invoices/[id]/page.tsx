@@ -189,8 +189,18 @@ export default function InvoiceDetailPage() {
         </table>
 
         {/* Total */}
-        <div className="border-t border-gray-200 pt-4">
-          <div className="flex justify-between text-lg font-bold">
+        <div className="border-t border-gray-200 pt-4 space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-500">Subtotal</span>
+            <span className="text-gray-900">{formatCurrency(Number(invoice.subtotal))}</span>
+          </div>
+          {invoice.tax_enabled && Number(invoice.tax_amount) > 0 && (
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Tax ({(Number(invoice.tax_rate) * 100).toFixed(2)}%)</span>
+              <span className="text-gray-900">{formatCurrency(Number(invoice.tax_amount))}</span>
+            </div>
+          )}
+          <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-100">
             <span className="text-gray-900">Total</span>
             <span className="text-indigo-600">{formatCurrency(Number(invoice.total))}</span>
           </div>
