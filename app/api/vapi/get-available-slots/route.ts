@@ -3,31 +3,9 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 /**
  * POST /api/vapi/get-available-slots
- * Vapi custom tool — returns available appointment slots for a work order.
- * Replicates FA - Get Available Slots n8n workflow logic.
+ * Returns available appointment slots for a work order.
+ * Reads ZIP windows, tech skills, and capacity from database (per-tenant).
  */
-
-// ZIP → time window mapping (DFW area routing)
-const ZIP_WINDOWS: Record<string, [string, string]> = {
-  "75033": ["8:30am", "10:30am"], "75034": ["8:30am", "10:30am"],
-  "75036": ["8:30am", "10:30am"], "75068": ["8:30am", "10:30am"],
-  "75078": ["8:30am", "10:30am"], "75009": ["8:30am", "10:30am"],
-  "75035": ["9:00am", "12:00pm"], "75070": ["9:00am", "12:00pm"],
-  "75071": ["9:00am", "12:00pm"], "75072": ["9:00am", "12:00pm"],
-  "75069": ["9:00am", "12:00pm"],
-  "75002": ["10:00am", "1:00pm"], "75013": ["10:00am", "1:00pm"],
-  "75074": ["10:00am", "1:00pm"], "75075": ["10:00am", "1:00pm"],
-  "75023": ["10:00am", "1:00pm"], "75024": ["10:00am", "1:00pm"],
-  "75025": ["10:00am", "1:00pm"], "75093": ["10:00am", "1:00pm"],
-  "75007": ["11:00am", "2:00pm"], "75010": ["11:00am", "2:00pm"],
-  "75056": ["11:00am", "2:00pm"],
-};
-
-// Tech profiles
-const TECHS: Record<string, { maxTotal: number; maxRepairs: number }> = {
-  Darryl: { maxTotal: 8, maxRepairs: 4 },
-  Jessy: { maxTotal: 12, maxRepairs: 6 },
-};
 
 function dateStr(d: Date): string {
   return d.toISOString().split("T")[0];
@@ -61,15 +39,15 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!wo) {
-      const result = {
+      return wrapResponse(toolCallId, {
         error: "Work order not found",
         agent_summary: "I was not able to find that work order. Let me have a team member call you back.",
         available_dates: [], tech_id: "", tech_name: "", wo_number: "",
         window_start: "", window_end: "", slot_count: 0,
-      };
-      return wrapResponse(toolCallId, result);
+      });
     }
 
+    const tenantId = wo.tenant_id;
     const jobType = wo.job_type || "";
     const applianceType = wo.appliance_type || "";
     const zip = wo.customer?.zip || "";
@@ -77,22 +55,69 @@ export async function POST(request: NextRequest) {
     const assignedTechId = wo.assigned_technician_id;
     const isRepair = jobType === "Repair Follow-up";
 
-    // Tech assignment logic (matches n8n workflow)
-    let useTech: string;
-    if (isRepair) {
-      useTech = assignedTechName || "Darryl";
-    } else if (applianceType.includes("Cooktop") || applianceType.includes("Microwave")) {
-      useTech = "Jessy";
-    } else if (applianceType.includes("Dishwasher") || applianceType.includes("Dryer")) {
-      useTech = "Darryl";
-    } else {
-      useTech = "EITHER";
+    // ── Get time window from service_zones table ──
+    const { data: zones } = await sb
+      .from("service_zones")
+      .select("*")
+      .eq("tenant_id", tenantId)
+      .eq("is_active", true);
+
+    let win: [string, string] = ["9:00am", "12:00pm"]; // default
+    for (const zone of zones || []) {
+      if (zone.zip_codes && zone.zip_codes.includes(zip)) {
+        win = [zone.window_start, zone.window_end];
+        break;
+      }
     }
 
-    // Get time window from ZIP
-    const win = ZIP_WINDOWS[zip] || ["9:00am", "12:00pm"];
+    // ── Get tech skills from database ──
+    const { data: skillRows } = await sb
+      .from("tech_skills")
+      .select("technician_id, appliance_type, priority")
+      .eq("tenant_id", tenantId);
 
-    // Get this WO's current appointment date (to exclude from available dates)
+    // ── Get all active technicians with capacity ──
+    const { data: allTechs } = await sb
+      .from("technicians")
+      .select("id, tech_name, max_daily_appointments, max_daily_repairs")
+      .eq("tenant_id", tenantId)
+      .eq("is_active", true);
+
+    // Build tech lookup
+    const techLookup: Record<number, { id: number; name: string; maxTotal: number; maxRepairs: number }> = {};
+    for (const t of allTechs || []) {
+      techLookup[t.id] = {
+        id: t.id,
+        name: t.tech_name,
+        maxTotal: t.max_daily_appointments || 12,
+        maxRepairs: t.max_daily_repairs || 6,
+      };
+    }
+
+    // ── Determine which techs to check ──
+    let techsToCheck: number[] = [];
+
+    if (isRepair && assignedTechId) {
+      // Repair follow-up: same tech
+      techsToCheck = [assignedTechId];
+    } else if (applianceType && skillRows && skillRows.length > 0) {
+      // Find techs with skills matching this appliance, sorted by priority
+      const matching = skillRows
+        .filter((s) => s.appliance_type === applianceType)
+        .sort((a, b) => a.priority - b.priority);
+
+      if (matching.length > 0) {
+        techsToCheck = matching.map((s) => s.technician_id);
+      } else {
+        // No skill match — use all techs
+        techsToCheck = (allTechs || []).map((t) => t.id);
+      }
+    } else {
+      // No skills configured — use all techs
+      techsToCheck = (allTechs || []).map((t) => t.id);
+    }
+
+    // ── Get this WO's current appointment dates (to exclude) ──
     const { data: currentAppts } = await sb
       .from("appointments")
       .select("appointment_date")
@@ -100,53 +125,41 @@ export async function POST(request: NextRequest) {
       .eq("status", "scheduled");
     const currentApptDates = new Set((currentAppts || []).map((a: any) => a.appointment_date));
 
-    // Fetch tech capacity for next 30 days
+    // ── Fetch tech capacity for next 30 days ──
     const { data: capacityRows } = await sb
       .from("tech_daily_capacity")
       .select("*")
+      .eq("tenant_id", tenantId)
       .gte("date", dateStr(new Date()));
 
-    const capMap: Record<string, { total: number; repairs: number; maxTotal: number; maxRepairs: number }> = {};
+    const capMap: Record<string, { total: number; repairs: number }> = {};
     for (const row of capacityRows || []) {
-      // Build key: "TechName-YYYY-MM-DD" (we'll look up tech name)
       capMap[`${row.technician_id}-${row.date}`] = {
         total: row.current_appointments || 0,
         repairs: row.current_repairs || 0,
-        maxTotal: row.max_appointments || 12,
-        maxRepairs: row.max_repairs || 6,
       };
     }
 
-    // Fetch days off
+    // ── Fetch days off + holidays ──
     const { data: daysOffRows } = await sb
       .from("days_off")
-      .select("technician_id, date_off, reason")
+      .select("technician_id, date_off")
+      .eq("tenant_id", tenantId)
       .gte("date_off", dateStr(new Date()));
+
+    const { data: holidays } = await sb
+      .from("tenant_holidays")
+      .select("holiday_date")
+      .eq("tenant_id", tenantId)
+      .gte("holiday_date", dateStr(new Date()));
 
     const daysOffSet = new Set<string>();
     for (const row of daysOffRows || []) {
       daysOffSet.add(`${row.technician_id}-${row.date_off}`);
-      if (!row.technician_id) daysOffSet.add(`all-${row.date_off}`);
     }
+    const holidaySet = new Set((holidays || []).map((h: any) => h.holiday_date));
 
-    // Fetch technician IDs
-    const { data: allTechs } = await sb
-      .from("technicians")
-      .select("id, tech_name")
-      .eq("tenant_id", wo.tenant_id)
-      .eq("is_active", true);
-
-    const techLookup: Record<string, { id: number; name: string }> = {};
-    for (const t of allTechs || []) {
-      techLookup[t.tech_name] = { id: t.id, name: t.tech_name };
-    }
-
-    // Determine which techs to check
-    const techsToCheck = useTech === "EITHER"
-      ? ["Darryl", "Jessy"]
-      : [useTech];
-
-    // Scan next 20 business days
+    // ── Scan next 20 business days ──
     const available: { date: string; tech_name: string; tech_id: number }[] = [];
     const today = new Date();
     let d = new Date(today);
@@ -155,38 +168,38 @@ export async function POST(request: NextRequest) {
     while (bizDays < 20) {
       d.setDate(d.getDate() + 1);
       const dow = d.getDay();
-      if (dow === 0 || dow === 6) continue;
+      if (dow === 0 || dow === 6) continue; // skip weekends
       bizDays++;
 
       const ds = dateStr(d);
 
+      // Skip holidays
+      if (holidaySet.has(ds)) continue;
+
       // Skip dates where this WO already has an appointment
       if (currentApptDates.has(ds)) continue;
 
-      for (const techName of techsToCheck) {
-        const tech = techLookup[techName];
+      for (const techId of techsToCheck) {
+        const tech = techLookup[techId];
         if (!tech) continue;
-        const profile = TECHS[techName] || { maxTotal: 12, maxRepairs: 6 };
 
         // Check days off
-        if (daysOffSet.has(`${tech.id}-${ds}`) || daysOffSet.has(`all-${ds}`)) continue;
+        if (daysOffSet.has(`${techId}-${ds}`)) continue;
 
         // Check capacity
-        const cap = capMap[`${tech.id}-${ds}`];
-        const maxTotal = cap?.maxTotal || profile.maxTotal;
-        const maxRepairs = cap?.maxRepairs || profile.maxRepairs;
+        const cap = capMap[`${techId}-${ds}`];
         const totalBooked = cap?.total || 0;
         const repairsBooked = cap?.repairs || 0;
 
-        if (totalBooked >= maxTotal) continue;
-        if (isRepair && repairsBooked >= maxRepairs) continue;
+        if (totalBooked >= tech.maxTotal) continue;
+        if (isRepair && repairsBooked >= tech.maxRepairs) continue;
 
-        available.push({ date: ds, tech_name: techName, tech_id: tech.id });
+        available.push({ date: ds, tech_name: tech.name, tech_id: tech.id });
         break; // first available tech for this date wins
       }
     }
 
-    // Build agent summary
+    // ── Build agent summary ──
     const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
     const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
     const fmtDate = (ds: string): string => {
@@ -227,9 +240,7 @@ export async function POST(request: NextRequest) {
 
 function wrapResponse(toolCallId: string, result: any) {
   if (toolCallId) {
-    return NextResponse.json({
-      results: [{ toolCallId, result: JSON.stringify(result) }],
-    });
+    return NextResponse.json({ results: [{ toolCallId, result: JSON.stringify(result) }] });
   }
   return NextResponse.json(result);
 }
