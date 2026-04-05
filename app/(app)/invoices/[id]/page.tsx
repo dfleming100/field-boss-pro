@@ -5,7 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { ArrowLeft, Send, CheckCircle2, Printer, Pencil, Save, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, Send, CheckCircle2, Printer, Pencil, Save, Plus, Trash2, X, MessageSquare, Mail, Link2 } from "lucide-react";
 
 interface LineItem {
   id: number | string;
@@ -30,6 +30,7 @@ export default function InvoiceDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [isSending, setIsSending] = useState(false);
 
   // Edit form state
   const [diagnosisFee, setDiagnosisFee] = useState(0);
@@ -83,6 +84,41 @@ export default function InvoiceDetailPage() {
     setSuccessMsg(`Invoice marked as ${newStatus}`);
     setTimeout(() => setSuccessMsg(""), 3000);
     await fetchInvoice();
+  };
+
+  const sendInvoice = async (method: "sms" | "email" | "both") => {
+    setIsSending(true);
+    setError("");
+    try {
+      const res = await fetch("/api/invoices/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoice_id: invoiceId, method }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const msgs = [];
+        if (data.sms) msgs.push("SMS sent");
+        if (data.email) msgs.push("Email sent");
+        if (msgs.length === 0) msgs.push("Invoice link ready");
+        setSuccessMsg(`${msgs.join(" & ")} — ${data.invoice_url}`);
+      } else {
+        setError(data.error || "Failed to send");
+      }
+      setTimeout(() => setSuccessMsg(""), 8000);
+      await fetchInvoice();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const copyLink = () => {
+    const url = `${window.location.origin}/invoice/${invoiceId}`;
+    navigator.clipboard.writeText(url);
+    setSuccessMsg("Invoice link copied!");
+    setTimeout(() => setSuccessMsg(""), 3000);
   };
 
   // Edit functions
@@ -218,11 +254,23 @@ export default function InvoiceDetailPage() {
               <button onClick={startEdit} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100">
                 <Pencil size={14} /> Edit
               </button>
-              {invoice.status === "draft" && (
-                <button onClick={() => updateStatus("sent")} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100">
-                  <Send size={14} /> Mark Sent
-                </button>
-              )}
+              <button
+                onClick={() => sendInvoice("sms")}
+                disabled={isSending}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
+              >
+                <MessageSquare size={14} /> Text
+              </button>
+              <button
+                onClick={() => sendInvoice("email")}
+                disabled={isSending}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50"
+              >
+                <Mail size={14} /> Email
+              </button>
+              <button onClick={copyLink} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100">
+                <Link2 size={14} /> Copy Link
+              </button>
               {(invoice.status === "sent" || invoice.status === "overdue") && (
                 <button onClick={() => updateStatus("paid")} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100">
                   <CheckCircle2 size={14} /> Mark Paid
