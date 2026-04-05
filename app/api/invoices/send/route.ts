@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
 
     const customer = invoice.customer as any;
     const tenant = invoice.tenant as any;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app").trim();
     const invoiceUrl = `${appUrl}/invoice/${invoice_id}`;
     const firstName = customer?.customer_name?.split(" ")[0] || "there";
     const total = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(invoice.total));
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: `${tenantName} <noreply@fieldbosspro.com>`,
+            from: `${tenantName} <noreply@send.fieldbosspro.com>`,
             to: customer.email,
             subject: `Invoice ${invoice.invoice_number} — ${total}`,
             html: `
@@ -107,11 +107,14 @@ export async function POST(request: NextRequest) {
             `,
           }),
         });
+        const emailData = await emailRes.json();
         results.email = emailRes.ok;
-      } catch {
-        // Email provider not configured — that's ok
+        if (!emailRes.ok) {
+          results.email_error = emailData;
+        }
+      } catch (emailErr) {
         results.email = false;
-        results.email_note = "Email provider not configured. Add RESEND_API_KEY to enable.";
+        results.email_error = (emailErr as Error).message;
       }
     }
 
