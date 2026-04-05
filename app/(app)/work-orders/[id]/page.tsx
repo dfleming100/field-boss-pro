@@ -21,6 +21,8 @@ import {
   FileText,
   MessageSquare,
   Send,
+  Camera,
+  X,
 } from "lucide-react";
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
@@ -67,6 +69,7 @@ export default function WorkOrderDetailPage() {
 
   const [technicians, setTechnicians] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
+  const [photos, setPhotos] = useState<any[]>([]);
 
   // Form state
   const [status, setStatus] = useState("New");
@@ -135,6 +138,16 @@ export default function WorkOrderDetailPage() {
     if (data) setTechnicians(data);
   }, [tenantUser]);
 
+  const fetchPhotos = useCallback(async () => {
+    if (!tenantUser) return;
+    const { data } = await supabase
+      .from("work_order_photos")
+      .select("*")
+      .eq("work_order_id", workOrderId)
+      .order("created_at", { ascending: false });
+    if (data) setPhotos(data);
+  }, [tenantUser, workOrderId]);
+
   const fetchAppointments = useCallback(async () => {
     if (!tenantUser) return;
     const { data } = await supabase
@@ -150,7 +163,8 @@ export default function WorkOrderDetailPage() {
     fetchWorkOrder();
     fetchTechs();
     fetchAppointments();
-  }, [fetchWorkOrder, fetchTechs, fetchAppointments]);
+    fetchPhotos();
+  }, [fetchWorkOrder, fetchTechs, fetchAppointments, fetchPhotos]);
 
   const handleSave = async () => {
     setError("");
@@ -459,7 +473,7 @@ export default function WorkOrderDetailPage() {
                 <select
                   value={status}
                   onChange={(e) => setStatus(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-medium"
                 >
                   {statusOptions.map((s) => (
                     <option key={s} value={s}>
@@ -470,25 +484,70 @@ export default function WorkOrderDetailPage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Job Type</label>
-                <p className="px-3 py-2 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-200 capitalize">
-                  {workOrder.job_type || "—"}
-                </p>
+                <select
+                  value={workOrder.job_type || ""}
+                  onChange={async (e) => {
+                    await supabase.from("work_orders").update({ job_type: e.target.value }).eq("id", workOrderId);
+                    await fetchWorkOrder();
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select...</option>
+                  <option value="Diagnosis">Diagnosis</option>
+                  <option value="Repair Follow-up">Repair Follow-up</option>
+                  <option value="Maintenance">Maintenance</option>
+                  <option value="Installation">Installation</option>
+                  <option value="Inspection">Inspection</option>
+                </select>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Appliance Type</label>
-                <p className="px-3 py-2 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-200">
-                  {Array.isArray(workOrder.appliance_type)
-                    ? workOrder.appliance_type.join(", ")
-                    : workOrder.appliance_type || "—"}
-                </p>
+                <select
+                  value={workOrder.appliance_type || ""}
+                  onChange={async (e) => {
+                    await supabase.from("work_orders").update({ appliance_type: e.target.value }).eq("id", workOrderId);
+                    await fetchWorkOrder();
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select...</option>
+                  <option value="Refrigerator">Refrigerator</option>
+                  <option value="Washer">Washer</option>
+                  <option value="Dryer">Dryer</option>
+                  <option value="Dishwasher">Dishwasher</option>
+                  <option value="Cooktop">Cooktop</option>
+                  <option value="Oven">Oven</option>
+                  <option value="Range">Range</option>
+                  <option value="Microwave">Microwave</option>
+                  <option value="Freezer">Freezer</option>
+                  <option value="Ice Maker">Ice Maker</option>
+                  <option value="Garbage Disposal">Garbage Disposal</option>
+                  <option value="Range Hood">Range Hood</option>
+                  <option value="Wine Cooler">Wine Cooler</option>
+                  <option value="Other">Other</option>
+                </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Duration (est.)</label>
-                <p className="px-3 py-2 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-200">
-                  {workOrder.estimated_duration_minutes
-                    ? `${workOrder.estimated_duration_minutes} min`
-                    : "—"}
-                </p>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Source</label>
+                <select
+                  value={workOrder.source || ""}
+                  onChange={async (e) => {
+                    await supabase.from("work_orders").update({ source: e.target.value }).eq("id", workOrderId);
+                    await fetchWorkOrder();
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select...</option>
+                  <option value="AHS">AHS (American Home Shield)</option>
+                  <option value="Google">Google</option>
+                  <option value="Facebook">Facebook</option>
+                  <option value="Referral">Referral</option>
+                  <option value="Website">Website</option>
+                  <option value="Walk-in">Walk-in</option>
+                  <option value="Repeat Customer">Repeat Customer</option>
+                  <option value="Other Warranty">Other Warranty</option>
+                  <option value="Other">Other</option>
+                </select>
               </div>
             </div>
             <div className="mt-4">
@@ -500,6 +559,66 @@ export default function WorkOrderDetailPage() {
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
                 placeholder="Add work order notes..."
               />
+            </div>
+
+            {/* Photos */}
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-semibold text-gray-500 uppercase">Photos</label>
+                <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 cursor-pointer">
+                  <Camera size={14} />
+                  Add Photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const fileName = `${workOrderId}/${Date.now()}-${file.name}`;
+                      const { error: uploadErr } = await supabase.storage
+                        .from("work-order-photos")
+                        .upload(fileName, file);
+                      if (uploadErr) { setError("Upload failed: " + uploadErr.message); return; }
+                      const { data: urlData } = supabase.storage
+                        .from("work-order-photos")
+                        .getPublicUrl(fileName);
+                      await supabase.from("work_order_photos").insert({
+                        work_order_id: parseInt(workOrderId),
+                        tenant_id: tenantUser?.tenant_id,
+                        file_url: urlData.publicUrl,
+                        file_name: file.name,
+                      });
+                      fetchPhotos();
+                    }}
+                  />
+                </label>
+              </div>
+              {photos.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-3 bg-gray-50 rounded-lg border border-dashed border-gray-300">No photos yet</p>
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  {photos.map((photo: any) => (
+                    <div key={photo.id} className="relative group">
+                      <img
+                        src={photo.file_url}
+                        alt={photo.file_name || "Photo"}
+                        className="w-full h-24 object-cover rounded-lg border border-gray-200"
+                      />
+                      <button
+                        onClick={async () => {
+                          await supabase.from("work_order_photos").delete().eq("id", photo.id);
+                          fetchPhotos();
+                        }}
+                        className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
