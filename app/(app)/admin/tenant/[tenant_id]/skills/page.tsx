@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { ArrowLeft, Save, Wrench } from "lucide-react";
+import { ArrowLeft, Save, Wrench, Plus, Trash2, X } from "lucide-react";
 
 const APPLIANCE_TYPES = [
   "Refrigerator", "Washer", "Dryer", "Dishwasher", "Cooktop", "Oven",
@@ -34,6 +34,10 @@ export default function SkillsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [showAddTech, setShowAddTech] = useState(false);
+  const [newTechName, setNewTechName] = useState("");
+  const [newTechPhone, setNewTechPhone] = useState("");
+  const [newTechEmail, setNewTechEmail] = useState("");
 
   const fetchData = useCallback(async () => {
     const [tenantRes, techRes, skillRes] = await Promise.all([
@@ -113,6 +117,43 @@ export default function SkillsPage() {
     }
   };
 
+  const addTech = async () => {
+    if (!newTechName.trim()) { setError("Tech name is required"); return; }
+    try {
+      await supabase.from("technicians").insert({
+        tenant_id: parseInt(tenantId),
+        tech_name: newTechName.trim(),
+        phone: newTechPhone || null,
+        email: newTechEmail || null,
+        is_active: true,
+        max_daily_appointments: 12,
+        max_daily_repairs: 6,
+      });
+      setShowAddTech(false);
+      setNewTechName("");
+      setNewTechPhone("");
+      setNewTechEmail("");
+      setSuccessMsg("Technician added");
+      setTimeout(() => setSuccessMsg(""), 3000);
+      await fetchData();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const deleteTech = async (techId: number, techName: string) => {
+    if (!window.confirm(`Delete ${techName}? This will remove them and all their skill assignments.`)) return;
+    try {
+      await supabase.from("tech_skills").delete().eq("technician_id", techId);
+      await supabase.from("technicians").delete().eq("id", techId);
+      setSuccessMsg(`${techName} deleted`);
+      setTimeout(() => setSuccessMsg(""), 3000);
+      await fetchData();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   if (isLoading) {
     return <div className="flex items-center justify-center py-24"><div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" /></div>;
   }
@@ -129,9 +170,14 @@ export default function SkillsPage() {
             <p className="text-sm text-gray-500">{tenant?.name} — assign appliance types to technicians</p>
           </div>
         </div>
-        <button onClick={saveSkills} disabled={isSaving} className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-          <Save size={14} /> {isSaving ? "Saving..." : "Save Skills"}
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowAddTech(true)} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100">
+            <Plus size={14} /> Add Tech
+          </button>
+          <button onClick={saveSkills} disabled={isSaving} className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+            <Save size={14} /> {isSaving ? "Saving..." : "Save Skills"}
+          </button>
+        </div>
       </div>
 
       {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
@@ -169,6 +215,13 @@ export default function SkillsPage() {
                       className="w-16 px-2 py-1 text-sm border border-gray-300 rounded-lg text-center"
                     />
                   </div>
+                  <button
+                    onClick={() => deleteTech(tech.id, tech.tech_name)}
+                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg ml-auto"
+                    title="Delete technician"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               ))}
             </div>
@@ -223,6 +276,40 @@ export default function SkillsPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Add Tech Modal */}
+      {showAddTech && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">Add Technician</h3>
+              <button onClick={() => setShowAddTech(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+                <input type="text" value={newTechName} onChange={(e) => setNewTechName(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="John Smith" autoFocus />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                  <input type="tel" value={newTechPhone} onChange={(e) => setNewTechPhone(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="(555) 123-4567" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input type="email" value={newTechEmail} onChange={(e) => setNewTechEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="john@email.com" />
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-200">
+              <button onClick={() => setShowAddTech(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button onClick={addTech} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">Add Technician</button>
+            </div>
           </div>
         </div>
       )}
