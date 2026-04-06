@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { ArrowLeft, DollarSign, Calendar, User } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 interface VisitRecord {
@@ -165,11 +166,15 @@ export default function PayrollReportPage() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {visits.map((v) => (
-              <tr key={v.id} className="hover:bg-gray-50">
+              <tr key={v.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => window.location.href = `/work-orders/${v.id}`}>
                 <td className="px-4 py-3 text-sm text-gray-900">
                   {new Date(v.first_visit_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                 </td>
-                <td className="px-4 py-3 text-sm font-semibold text-indigo-600">{v.work_order_number}</td>
+                <td className="px-4 py-3">
+                  <Link href={`/work-orders/${v.id}`} className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">
+                    {v.work_order_number}
+                  </Link>
+                </td>
                 <td className="px-4 py-3 text-sm text-gray-900">{v.customer_name}</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{v.appliance_type || "—"}</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{v.tech_name}</td>
