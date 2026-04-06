@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
       .from("work_orders")
       .select(`
         *,
-        technician:technicians(tech_name),
+        technician:technicians!assigned_technician_id(tech_name),
         appointments(id, appointment_date, start_time, end_time, status)
       `)
       .eq("customer_id", customer.id)

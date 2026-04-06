@@ -49,7 +49,7 @@ export default function PayrollReportPage() {
       .select(`
         id, work_order_number, appliance_type, first_visit_date, first_visit_tech_id,
         customer:customers(customer_name),
-        technician:technicians(tech_name)
+        tech:technicians!first_visit_tech_id(tech_name)
       `)
       .eq("tenant_id", tenantUser.tenant_id)
       .eq("first_visit_completed", true)

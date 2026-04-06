@@ -97,7 +97,7 @@ export default function WorkOrderDetailPage() {
         .select(`
           *,
           customer:customers(*),
-          technician:technicians(tech_name, phone, email)
+          technician:technicians!assigned_technician_id(tech_name, phone, email)
         `)
         .eq("id", workOrderId)
         .eq("tenant_id", tenantUser.tenant_id)
@@ -152,7 +152,7 @@ export default function WorkOrderDetailPage() {
     if (!tenantUser) return;
     const { data } = await supabase
       .from("appointments")
-      .select(`*, technician:technicians(tech_name)`)
+      .select(`*, technician:technicians!assigned_technician_id(tech_name)`)
       .eq("tenant_id", tenantUser.tenant_id)
       .eq("work_order_id", workOrderId)
       .order("appointment_date", { ascending: true });

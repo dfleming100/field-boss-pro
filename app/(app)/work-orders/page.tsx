@@ -77,7 +77,7 @@ function WorkOrdersContent() {
           `
           *,
           customer:customers(customer_name, service_address, city, state, zip, phone, email),
-          technician:technicians(tech_name),
+          technician:technicians!assigned_technician_id(tech_name),
           appointments(appointment_date, start_time, end_time, status)
         `
         )

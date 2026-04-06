@@ -85,7 +85,7 @@ export default function DashboardPage() {
       supabase.from("technicians").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("is_active", true),
       supabase.from("leads").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("status", "new"),
       supabase.from("work_orders").select("*, customer:customers(customer_name)").eq("tenant_id", tid).order("created_at", { ascending: false }).limit(5),
-      supabase.from("appointments").select(`*, technician:technicians(tech_name), work_order:work_orders(work_order_number, customer_id, customer:customers(customer_name))`).eq("tenant_id", tid).eq("appointment_date", today).order("start_time"),
+      supabase.from("appointments").select(`*, technician:technicians!assigned_technician_id(tech_name), work_order:work_orders(work_order_number, customer_id, customer:customers(customer_name))`).eq("tenant_id", tid).eq("appointment_date", today).order("start_time"),
     ]);
 
     setStats({

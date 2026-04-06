@@ -121,7 +121,7 @@ export async function GET(request: NextRequest) {
       id, work_order_number, status, job_type, appliance_type,
       service_date, notes, created_at, updated_at,
       customer:customers(customer_name, phone, service_address, city, state, zip),
-      technician:technicians(tech_name, phone)
+      technician:technicians!assigned_technician_id(tech_name, phone)
     `)
     .eq("tenant_id", tenantId)
     .eq("warranty_wo_number", warrantyWoNumber)

@@ -110,7 +110,7 @@ export default function CustomerPage() {
     if (!tenantUser || isNew) return;
     const { data } = await supabase
       .from("work_orders")
-      .select("*, technician:technicians(tech_name)")
+      .select("*, technician:technicians!assigned_technician_id(tech_name)")
       .eq("tenant_id", tenantUser.tenant_id)
       .eq("customer_id", customerId)
       .order("created_at", { ascending: false });
@@ -132,7 +132,7 @@ export default function CustomerPage() {
       .select(`
         *,
         work_order:work_orders!inner(work_order_number, customer_id),
-        technician:technicians(tech_name)
+        technician:technicians!assigned_technician_id(tech_name)
       `)
       .eq("tenant_id", tenantUser.tenant_id)
       .eq("work_order.customer_id", customerId)

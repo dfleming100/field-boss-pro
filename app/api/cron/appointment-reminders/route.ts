@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
           id, tenant_id, work_order_number, appliance_type, job_type,
           customer:customers(customer_name, phone)
         ),
-        technician:technicians(tech_name)
+        technician:technicians!assigned_technician_id(tech_name)
       `)
       .eq("appointment_date", today)
       .eq("status", "scheduled");

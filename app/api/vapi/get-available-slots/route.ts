@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       .select(`
         *,
         customer:customers(zip),
-        technician:technicians(id, tech_name)
+        technician:technicians!assigned_technician_id(id, tech_name)
       `)
       .or(`work_order_number.eq.${workOrderNumber}`)
       .limit(1)
