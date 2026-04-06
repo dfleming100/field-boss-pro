@@ -178,10 +178,16 @@ export default function WorkOrderDetailPage() {
         activity: activityNotes,
       });
 
+      // Auto-set job type based on status
+      let autoJobType = workOrder?.job_type;
+      if (status === "New") autoJobType = "Diagnosis";
+      if (status === "Parts Have Arrived") autoJobType = "Repair Follow-up";
+
       const { error: updateError } = await supabase
         .from("work_orders")
         .update({
           status,
+          job_type: autoJobType,
           assigned_technician_id: assignedTechId || null,
           service_date: serviceDate || null,
           notes,
@@ -192,8 +198,40 @@ export default function WorkOrderDetailPage() {
 
       if (updateError) throw updateError;
 
-      // Fire SMS notification if status changed
+      // Auto-cancel appointments when status changes FROM Scheduled to something else
       const oldStatus = workOrder?.status;
+      if (oldStatus === "Scheduled" && status !== "Scheduled") {
+        // Delete scheduled appointments and clean up capacity
+        const { data: oldAppts } = await supabase
+          .from("appointments")
+          .select("id, appointment_date, technician_id")
+          .eq("work_order_id", workOrderId)
+          .eq("status", "scheduled");
+
+        for (const appt of oldAppts || []) {
+          const { data: cap } = await supabase
+            .from("tech_daily_capacity")
+            .select("id, current_appointments")
+            .eq("technician_id", appt.technician_id)
+            .eq("date", appt.appointment_date)
+            .single();
+
+          if (cap) {
+            const newCount = Math.max(0, (cap.current_appointments || 1) - 1);
+            if (newCount === 0) {
+              await supabase.from("tech_daily_capacity").delete().eq("id", cap.id);
+            } else {
+              await supabase.from("tech_daily_capacity").update({ current_appointments: newCount }).eq("id", cap.id);
+            }
+          }
+          await supabase.from("appointments").delete().eq("id", appt.id);
+        }
+
+        // Clear service date
+        await supabase.from("work_orders").update({ service_date: null }).eq("id", workOrderId);
+      }
+
+      // Fire SMS notification if status changed
       if (oldStatus && oldStatus !== status) {
         try {
           const notifRes = await fetch("/api/notifications/status-change", {
@@ -482,21 +520,9 @@ export default function WorkOrderDetailPage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Job Type</label>
-                <select
-                  value={workOrder.job_type || ""}
-                  onChange={async (e) => {
-                    await supabase.from("work_orders").update({ job_type: e.target.value }).eq("id", workOrderId);
-                    await fetchWorkOrder();
-                  }}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-                >
-                  <option value="">Select...</option>
-                  <option value="Diagnosis">Diagnosis</option>
-                  <option value="Repair Follow-up">Repair Follow-up</option>
-                  <option value="Maintenance">Maintenance</option>
-                  <option value="Installation">Installation</option>
-                  <option value="Inspection">Inspection</option>
-                </select>
+                <p className="px-3 py-2 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-200">
+                  {workOrder.job_type || "—"} <span className="text-gray-400 text-xs">(auto-set by status)</span>
+                </p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Appliance Type</label>
