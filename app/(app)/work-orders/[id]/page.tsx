@@ -198,6 +198,12 @@ export default function WorkOrderDetailPage() {
         );
       }
 
+      // Auto-sync appliance_type on work_orders (feeds SMS/Vapi/tech assignment)
+      const applianceTypeList = validAppliances.map((a) => a.item).filter(Boolean).join(", ");
+      if (applianceTypeList) {
+        await supabase.from("work_orders").update({ appliance_type: applianceTypeList }).eq("id", workOrderId);
+      }
+
       // Auto-set job type based on status
       let autoJobType = workOrder?.job_type;
       if (status === "New") autoJobType = "Diagnosis";
@@ -545,31 +551,13 @@ export default function WorkOrderDetailPage() {
                 </p>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Appliance Type</label>
-                <select
-                  value={workOrder.appliance_type || ""}
-                  onChange={async (e) => {
-                    await supabase.from("work_orders").update({ appliance_type: e.target.value }).eq("id", workOrderId);
-                    await fetchWorkOrder();
-                  }}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-                >
-                  <option value="">Select...</option>
-                  <option value="Refrigerator">Refrigerator</option>
-                  <option value="Washer">Washer</option>
-                  <option value="Dryer">Dryer</option>
-                  <option value="Dishwasher">Dishwasher</option>
-                  <option value="Cooktop">Cooktop</option>
-                  <option value="Oven">Oven</option>
-                  <option value="Range">Range</option>
-                  <option value="Microwave">Microwave</option>
-                  <option value="Freezer">Freezer</option>
-                  <option value="Ice Maker">Ice Maker</option>
-                  <option value="Garbage Disposal">Garbage Disposal</option>
-                  <option value="Range Hood">Range Hood</option>
-                  <option value="Wine Cooler">Wine Cooler</option>
-                  <option value="Other">Other</option>
-                </select>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Appliances</label>
+                <p className="px-3 py-2 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-200">
+                  {appliances.length > 0
+                    ? appliances.map((a) => a.item).filter(Boolean).join(", ") || "—"
+                    : workOrder.appliance_type || "—"}
+                  <span className="text-gray-400 text-xs ml-1">(from details below)</span>
+                </p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Source</label>
