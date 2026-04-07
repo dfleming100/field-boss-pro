@@ -56,6 +56,13 @@ export async function POST(request: NextRequest) {
       .map((msg: any) => `${msg.direction === "inbound" ? "Customer" : "Fleming"}: ${msg.body}`)
       .join("\n");
 
+    // 0. Fetch tenant's serviced appliances from skills table
+    const { data: skillsData } = await sb
+      .from("tech_skills")
+      .select("appliance_type")
+      .eq("tenant_id", 1);
+    const servicedAppliances = [...new Set((skillsData || []).map((s: any) => s.appliance_type))].join(", ");
+
     // 1. Customer lookup in Supabase
     const lookupRes = await fetch(`${APP_URL}/api/vapi/customer-lookup`, {
       method: "POST",
@@ -76,7 +83,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 3. Build Claude prompt and get intent (with conversation history)
-    const aiResult = await classifyIntent(body, customerData, slotsData, conversationThread);
+    const aiResult = await classifyIntent(body, customerData, slotsData, conversationThread, servicedAppliances);
 
     // 4. Take action
     let replyText = aiResult.reply;
@@ -189,7 +196,8 @@ async function classifyIntent(
   smsBody: string,
   customer: any,
   slots: any,
-  conversationThread?: string
+  conversationThread?: string,
+  servicedAppliances?: string
 ): Promise<{ action: string; reply: string; chosen_date?: string; tech_id?: string }> {
   if (!ANTHROPIC_API_KEY) {
     return { action: "unclear", reply: "Thanks for reaching out! Please call us at (855) 269-3196." };
@@ -219,6 +227,9 @@ The LATEST message from the customer is what you are responding to. Use the conv
 LATEST MESSAGE FROM CUSTOMER: "${smsBody}"
 CUSTOMER NAME: ${customer.customer_name}
 CUSTOMER ADDRESS: ${customer.address}
+
+APPLIANCES WE SERVICE: ${servicedAppliances || "all major appliances"}
+IMPORTANT: Only mention appliances from the list above. If a customer asks about an appliance NOT on this list, say "We do not service that appliance type. We specialize in ${servicedAppliances}."
 
 WORK ORDER INFO:
 - Work Order: ${wo.wo_number || "none"}
