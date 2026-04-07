@@ -88,6 +88,63 @@ export async function POST(request: NextRequest) {
     // 4. Take action
     let replyText = aiResult.reply;
 
+    // Handle new customer creation
+    if (aiResult.action === "new_customer" && aiResult.customer_name && aiResult.appliance_type) {
+      try {
+        const createRes = await fetch(`${APP_URL}/api/sms/create-customer-wo`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenant_id: 1,
+            phone: from,
+            customer_name: aiResult.customer_name,
+            service_address: aiResult.service_address || "",
+            city: aiResult.city || "",
+            state: aiResult.state || "",
+            zip: aiResult.zip || "",
+            appliance_type: aiResult.appliance_type,
+          }),
+        });
+        const createData = await createRes.json();
+        if (createData.success) {
+          // Now get slots for the new WO
+          const newSlotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ work_order_number: createData.work_order_number }),
+          });
+          const newSlots = await newSlotsRes.json();
+          replyText = aiResult.reply + (newSlots.agent_summary ? ` ${newSlots.agent_summary}` : "");
+        }
+      } catch {}
+    }
+
+    // Handle new WO for existing customer (different appliance)
+    if (aiResult.action === "new_wo" && aiResult.appliance_type && customerData.found) {
+      try {
+        const createRes = await fetch(`${APP_URL}/api/sms/create-customer-wo`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenant_id: 1,
+            phone: from,
+            existing_customer_id: customerData.customer_id,
+            appliance_type: aiResult.appliance_type,
+          }),
+        });
+        const createData = await createRes.json();
+        if (createData.success) {
+          const newSlotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ work_order_number: createData.work_order_number }),
+          });
+          const newSlots = await newSlotsRes.json();
+          replyText = aiResult.reply + (newSlots.agent_summary ? ` ${newSlots.agent_summary}` : "");
+        }
+      } catch {}
+    }
+
     // If reschedule, use the agent summary from slots
     if (aiResult.action === "reschedule" && slotsData?.agent_summary) {
       replyText = `No problem! ${slotsData.agent_summary}`;
@@ -203,12 +260,7 @@ async function classifyIntent(
     return { action: "unclear", reply: "Thanks for reaching out! Please call us at (855) 269-3196." };
   }
 
-  if (!customer.found) {
-    return {
-      action: "unknown_customer",
-      reply: "Hi, thanks for texting Fleming Appliance Repair! We could not find your account. Please call us at (855) 269-3196 so we can assist you.",
-    };
-  }
+  const isNewCustomer = !customer.found;
 
   const wo = customer.active_wo || {};
   const today = new Date().toISOString().split("T")[0];
@@ -225,11 +277,27 @@ ${conversationThread}
 The LATEST message from the customer is what you are responding to. Use the conversation history to understand context — for example, if Fleming just offered dates and the customer says "yes" or "the 7th", they are responding to that offer.
 ` : ""}
 LATEST MESSAGE FROM CUSTOMER: "${smsBody}"
-CUSTOMER NAME: ${customer.customer_name}
-CUSTOMER ADDRESS: ${customer.address}
+IS NEW CUSTOMER (not in our system): ${isNewCustomer ? "YES" : "NO"}
+CUSTOMER NAME: ${customer.customer_name || "unknown"}
+CUSTOMER ADDRESS: ${customer.address || "unknown"}
 
 APPLIANCES WE SERVICE: ${servicedAppliances || "all major appliances"}
 IMPORTANT: Only mention appliances from the list above. If a customer asks about an appliance NOT on this list, say "We do not service that appliance type. We specialize in ${servicedAppliances}."
+
+${isNewCustomer ? `
+NEW CUSTOMER FLOW:
+This person is NOT in our system. You need to collect their info to create an account and schedule them.
+- If they haven't provided their name yet, ask: "What is your name?"
+- If they haven't provided their address yet, ask: "What is your service address?"
+- If they haven't provided which appliance needs service, ask: "Which appliance needs service?"
+- Once you have name + address + appliance, return action "new_customer" with all the info.
+- Use conversation history to check if they already provided any of this info in previous messages.
+` : `
+EXISTING CUSTOMER — NEW APPLIANCE FLOW:
+If the customer asks about scheduling service for a DIFFERENT appliance than what is on their current work order, return action "new_wo" to create a new work order for the new appliance. Do NOT move their existing work order to a different appliance.
+Current WO appliance: ${wo.appliance_type || "none"}
+If the customer mentions a different appliance (e.g., WO is Washer but they ask about Microwave), use action "new_wo".
+`}
 
 WORK ORDER INFO:
 - Work Order: ${wo.wo_number || "none"}
@@ -343,12 +411,14 @@ ACTIONS — return JSON:
 2. "info" — Greetings, pricing, general questions, running late, parts status. Return: {"action": "info", "reply": "helpful response"}
 3. "reschedule" — Explicitly asks to reschedule. Return: {"action": "reschedule", "reply": "offer first 3 available dates with window"}
 4. "status" — Asking about appointment, tech ETA, or confirming. Return: {"action": "status", "reply": "appointment details"}
-5. "callback" — Same issue after repair. Return: {"action": "callback", "reply": "contact warranty company for recall"}
-6. "escalate" — Wants a human. Return: {"action": "escalate", "reply": "we will forward to team"}
-7. "cancel" — Wants to cancel. Return: {"action": "cancel", "reply": "cancellation confirmed"}
-8. "review" — Reply to a review request (number 1-5). Return: {"action": "review", "reply": "thank you message, include Google link only for 4-5"}
-9. "optout" — STOP/unsubscribe. Return: {"action": "optout", "reply": "opted out message"}
-10. "unclear" — Truly cannot determine intent. Return: {"action": "unclear", "reply": "friendly prompt to clarify"}
+5. "new_customer" — New person not in system, and you have collected their name + address + appliance from the conversation. Return: {"action": "new_customer", "customer_name": "John Smith", "service_address": "123 Main St", "city": "Frisco", "state": "TX", "zip": "75034", "appliance_type": "Washer", "reply": "Great, I have you set up! Let me check availability for your [appliance] service."}
+6. "new_wo" — Existing customer asking about a DIFFERENT appliance than their current WO. Return: {"action": "new_wo", "appliance_type": "Microwave", "reply": "I will set up a new service order for your Microwave. Let me check availability."}
+7. "callback" — Same issue after repair. Return: {"action": "callback", "reply": "contact warranty company for recall"}
+8. "escalate" — Wants a human. Return: {"action": "escalate", "reply": "we will forward to team"}
+9. "cancel" — Wants to cancel. Return: {"action": "cancel", "reply": "cancellation confirmed"}
+10. "review" — Reply to a review request (number 1-5). Return: {"action": "review", "reply": "thank you message, include Google link only for 4-5"}
+11. "optout" — STOP/unsubscribe. Return: {"action": "optout", "reply": "opted out message"}
+12. "unclear" — Truly cannot determine intent. Return: {"action": "unclear", "reply": "friendly prompt to clarify"}
 
 Return ONLY valid JSON.`;
 
@@ -410,6 +480,12 @@ Return ONLY valid JSON.`;
       reply: parsed.reply || "Thanks for reaching out! Please call us at (855) 269-3196.",
       chosen_date: parsed.chosen_date,
       tech_id: parsed.tech_id,
+      customer_name: parsed.customer_name,
+      service_address: parsed.service_address,
+      city: parsed.city,
+      state: parsed.state,
+      zip: parsed.zip,
+      appliance_type: parsed.appliance_type,
     };
   } catch (err) {
     console.error("[SMS] Claude API error:", err);
