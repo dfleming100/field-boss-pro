@@ -35,16 +35,16 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; d
 
 const statusOptions = ["New", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
 
-interface ApplianceDetails {
+interface ApplianceDetail {
+  id: number | string;
   make: string;
   item: string;
   model: string;
-  serial: string;
-  age: string;
+  serial_number: string;
   diagnosis: string;
-  cause: string;
-  fix: string;
   parts: string;
+  sort_order: number;
+  isNew?: boolean;
 }
 
 interface ActivityNote {
@@ -79,11 +79,8 @@ export default function WorkOrderDetailPage() {
   const [endTime, setEndTime] = useState("11:00");
   const [notes, setNotes] = useState("");
 
-  // Appliance details (stored in description as JSON)
-  const [appliance, setAppliance] = useState<ApplianceDetails>({
-    make: "", item: "", model: "", serial: "",
-    age: "", diagnosis: "", cause: "", fix: "", parts: "",
-  });
+  // Appliance details (stored in appliance_details table)
+  const [appliances, setAppliances] = useState<ApplianceDetail[]>([]);
 
   // Activity feed
   const [activityNotes, setActivityNotes] = useState<ActivityNote[]>([]);
@@ -110,16 +107,21 @@ export default function WorkOrderDetailPage() {
       setServiceDate(data.service_date || "");
       setNotes(data.notes || "");
 
-      // Parse appliance details from description (JSON)
+      // Parse activity notes from description (JSON)
       if (data.description) {
         try {
           const parsed = JSON.parse(data.description);
-          if (parsed.appliance) setAppliance(parsed.appliance);
           if (parsed.activity) setActivityNotes(parsed.activity);
-        } catch {
-          // description is plain text, not JSON
-        }
+        } catch {}
       }
+
+      // Fetch appliance details
+      const { data: applianceData } = await supabase
+        .from("appliance_details")
+        .select("*")
+        .eq("work_order_id", workOrderId)
+        .order("sort_order");
+      if (applianceData) setAppliances(applianceData);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -172,11 +174,29 @@ export default function WorkOrderDetailPage() {
     setIsSaving(true);
 
     try {
-      // Build description JSON
+      // Build description JSON (activity notes only now)
       const descriptionData = JSON.stringify({
-        appliance,
         activity: activityNotes,
       });
+
+      // Save appliance details
+      await supabase.from("appliance_details").delete().eq("work_order_id", workOrderId);
+      const validAppliances = appliances.filter((a) => a.make || a.item || a.model || a.diagnosis);
+      if (validAppliances.length > 0) {
+        await supabase.from("appliance_details").insert(
+          validAppliances.map((a, i) => ({
+            work_order_id: parseInt(workOrderId),
+            tenant_id: tenantUser?.tenant_id,
+            make: a.make || null,
+            item: a.item || null,
+            model: a.model || null,
+            serial_number: a.serial_number || null,
+            diagnosis: a.diagnosis || null,
+            parts: a.parts || null,
+            sort_order: i + 1,
+          }))
+        );
+      }
 
       // Auto-set job type based on status
       let autoJobType = workOrder?.job_type;
@@ -747,59 +767,137 @@ export default function WorkOrderDetailPage() {
             )}
           </div>
 
-          {/* Appliance Details */}
+          {/* Appliance Details (up to 4) */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Wrench size={18} className="text-gray-400" />
-              <h2 className="text-lg font-semibold text-gray-900">Appliance Details</h2>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Wrench size={18} className="text-gray-400" />
+                <h2 className="text-lg font-semibold text-gray-900">Appliance Details ({appliances.length})</h2>
+              </div>
+              {appliances.length < 4 && (
+                <button
+                  onClick={() => setAppliances([...appliances, {
+                    id: `new-${Date.now()}`, make: "", item: "", model: "",
+                    serial_number: "", diagnosis: "", parts: "",
+                    sort_order: appliances.length + 1, isNew: true,
+                  }])}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100"
+                >
+                  <Plus size={14} />
+                  Add Appliance
+                </button>
+              )}
             </div>
-            <div className="grid grid-cols-3 gap-4">
-              {([
-                { key: "make", label: "Make" },
-                { key: "item", label: "Item" },
-                { key: "model", label: "Model" },
-                { key: "serial", label: "Serial #" },
-                { key: "age", label: "Age" },
-              ] as { key: keyof ApplianceDetails; label: string }[]).map((field) => (
-                <div key={field.key}>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    {field.label}
-                  </label>
-                  <input
-                    type="text"
-                    value={appliance[field.key]}
-                    onChange={(e) =>
-                      setAppliance({ ...appliance, [field.key]: e.target.value })
-                    }
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-                    placeholder={field.label}
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 gap-4 mt-4">
-              {([
-                { key: "diagnosis", label: "Diagnosis" },
-                { key: "cause", label: "Cause of Issue" },
-                { key: "fix", label: "Fix / Resolution" },
-                { key: "parts", label: "Parts Needed" },
-              ] as { key: keyof ApplianceDetails; label: string }[]).map((field) => (
-                <div key={field.key}>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    {field.label}
-                  </label>
-                  <textarea
-                    value={appliance[field.key]}
-                    onChange={(e) =>
-                      setAppliance({ ...appliance, [field.key]: e.target.value })
-                    }
-                    rows={2}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-                    placeholder={field.label}
-                  />
-                </div>
-              ))}
-            </div>
+
+            {appliances.length === 0 ? (
+              <div className="text-center py-6 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                <p className="text-sm text-gray-400 mb-2">No appliances added</p>
+                <button
+                  onClick={() => setAppliances([{
+                    id: `new-${Date.now()}`, make: "", item: "", model: "",
+                    serial_number: "", diagnosis: "", parts: "",
+                    sort_order: 1, isNew: true,
+                  }])}
+                  className="text-sm text-indigo-600 font-medium hover:text-indigo-700"
+                >
+                  + Add First Appliance
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {appliances.map((appl, idx) => (
+                  <div key={appl.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50/50">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold text-gray-700">Appliance {idx + 1}</h3>
+                      <button
+                        onClick={() => setAppliances(appliances.filter((a) => a.id !== appl.id))}
+                        className="text-xs text-red-500 hover:text-red-700 font-medium"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-4 gap-3 mb-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Make</label>
+                        <input
+                          type="text"
+                          value={appl.make}
+                          onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, make: e.target.value } : a))}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                          placeholder="Samsung"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Item</label>
+                        <select
+                          value={appl.item}
+                          onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, item: e.target.value } : a))}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                        >
+                          <option value="">Select...</option>
+                          <option value="Refrigerator">Refrigerator</option>
+                          <option value="Washer">Washer</option>
+                          <option value="Dryer">Dryer</option>
+                          <option value="Dishwasher">Dishwasher</option>
+                          <option value="Cooktop">Cooktop</option>
+                          <option value="Oven">Oven</option>
+                          <option value="Range">Range</option>
+                          <option value="Microwave">Microwave</option>
+                          <option value="Freezer">Freezer</option>
+                          <option value="Ice Maker">Ice Maker</option>
+                          <option value="Garbage Disposal">Garbage Disposal</option>
+                          <option value="Range Hood">Range Hood</option>
+                          <option value="Wine Cooler">Wine Cooler</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Model</label>
+                        <input
+                          type="text"
+                          value={appl.model}
+                          onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, model: e.target.value } : a))}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                          placeholder="Model #"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Serial #</label>
+                        <input
+                          type="text"
+                          value={appl.serial_number}
+                          onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, serial_number: e.target.value } : a))}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                          placeholder="Serial #"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Diagnosis</label>
+                        <textarea
+                          value={appl.diagnosis}
+                          onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, diagnosis: e.target.value } : a))}
+                          rows={2}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                          placeholder="What's wrong..."
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Parts</label>
+                        <textarea
+                          value={appl.parts}
+                          onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, parts: e.target.value } : a))}
+                          rows={2}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                          placeholder="Parts needed..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Items / Parts Table */}
