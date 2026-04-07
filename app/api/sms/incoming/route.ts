@@ -255,7 +255,7 @@ async function classifyIntent(
   slots: any,
   conversationThread?: string,
   servicedAppliances?: string
-): Promise<{ action: string; reply: string; chosen_date?: string; tech_id?: string }> {
+): Promise<{ action: string; reply: string; chosen_date?: string; tech_id?: string; customer_name?: string; service_address?: string; city?: string; state?: string; zip?: string; appliance_type?: string }> {
   if (!ANTHROPIC_API_KEY) {
     return { action: "unclear", reply: "Thanks for reaching out! Please call us at (855) 269-3196." };
   }
