@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
         customer:customers(zip),
         technician:technicians!assigned_technician_id(id, tech_name)
       `)
-      .or(`work_order_number.eq.${workOrderNumber}`)
+      .eq("work_order_number", workOrderNumber)
       .limit(1)
       .single();
 
