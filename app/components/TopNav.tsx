@@ -146,7 +146,7 @@ export default function TopNav() {
                 <User size={16} className="text-gray-400" />
                 Profile & Settings
               </Link>
-              {tenantUser?.role === "admin" && (
+              {tenantUser?.role === "admin" && String(tenantUser?.tenant_id) === "1" && (
                 <Link
                   href="/admin/dashboard"
                   onClick={() => setProfileOpen(false)}
