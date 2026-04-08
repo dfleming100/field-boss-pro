@@ -12,18 +12,28 @@ import { supabaseAdmin } from "@/lib/supabase";
 function normalizeAddress(addr: string): string {
   let s = addr.trim().toLowerCase();
   const abbrevs: [RegExp, string][] = [
+    [/\bfort\b/g, "ft"], [/\bmount\b/g, "mt"],
     [/\bparkway\b/g, "pkwy"], [/\bboulevard\b/g, "blvd"],
     [/\bdrive\b/g, "dr"], [/\bstreet\b/g, "st"],
     [/\bavenue\b/g, "ave"], [/\blane\b/g, "ln"],
     [/\broad\b/g, "rd"], [/\bcourt\b/g, "ct"],
     [/\bcircle\b/g, "cir"], [/\bplace\b/g, "pl"],
-    [/\btrail\b/g, "trl"], [/\bnorth\b/g, "n"],
-    [/\bsouth\b/g, "s"], [/\beast\b/g, "e"], [/\bwest\b/g, "w"],
+    [/\btrail\b/g, "trl"], [/\bhighway\b/g, "hwy"],
+    [/\bnorth\b/g, "n"], [/\bsouth\b/g, "s"],
+    [/\beast\b/g, "e"], [/\bwest\b/g, "w"],
   ];
   for (const [pattern, replacement] of abbrevs) {
     s = s.replace(pattern, replacement);
   }
+  // Remove extra spaces
+  s = s.replace(/\s+/g, " ").trim();
   return s;
+}
+
+// Extract just the street number and key words for fuzzy matching
+function getSearchTokens(addr: string): string[] {
+  const normalized = normalizeAddress(addr);
+  return normalized.split(" ").filter((t) => t.length > 1);
 }
 
 // Expand address for TTS (voice reads "Dr" as "Doctor")
@@ -61,15 +71,43 @@ export async function POST(request: NextRequest) {
 
     let customer: any = null;
 
-    // Search by address first
+    // Search by address — try multiple approaches
     if (address.length >= 3) {
+      // 1. Try exact normalized match
       const normalized = normalizeAddress(address);
-      const { data } = await sb
+      const { data: exactMatch } = await sb
         .from("customers")
         .select("*")
         .ilike("service_address", `%${normalized}%`)
         .limit(1);
-      if (data?.length) customer = data[0];
+      if (exactMatch?.length) customer = exactMatch[0];
+
+      // 2. Try with original address
+      if (!customer) {
+        const { data: origMatch } = await sb
+          .from("customers")
+          .select("*")
+          .ilike("service_address", `%${address}%`)
+          .limit(1);
+        if (origMatch?.length) customer = origMatch[0];
+      }
+
+      // 3. Try matching just the street number + first keyword
+      if (!customer) {
+        const tokens = getSearchTokens(address);
+        // Get the street number (first token that's a number)
+        const streetNum = tokens.find((t) => /^\d+$/.test(t));
+        // Get the first non-number word
+        const streetWord = tokens.find((t) => !/^\d+$/.test(t) && t !== "st" && t !== "dr" && t !== "ave" && t !== "blvd" && t !== "rd" && t !== "ln" && t !== "ct");
+        if (streetNum && streetWord) {
+          const { data: fuzzyMatch } = await sb
+            .from("customers")
+            .select("*")
+            .ilike("service_address", `%${streetNum}%${streetWord}%`)
+            .limit(5);
+          if (fuzzyMatch?.length) customer = fuzzyMatch[0];
+        }
+      }
     }
 
     // Fallback: search by phone
@@ -96,7 +134,7 @@ export async function POST(request: NextRequest) {
     if (!customer) {
       const result = {
         found: false,
-        message: "No customer record found for the provided address or phone number.",
+        message: "I could not find an account for that address. Ask the customer: Do you have a work order number or a phone number on file? Try looking them up again with the phone number. Only create a new account after trying phone number and the customer confirms they are new.",
       };
       return wrapResponse(toolCallId, result);
     }
