@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
     const zip = (args.zip || "").trim();
     const phone = (args.phone || "").trim();
     const applianceType = (args.appliance_type || args.applianceType || "").trim();
+    const tenantId = args.tenant_id || args.tenantId || 1;
 
     if (!customerName) {
       return wrapResponse(toolCallId, { success: false, error: "Customer name is required" });
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
       const { data: existing } = await sb
         .from("customers")
         .select("id")
-        .eq("tenant_id", 1)
+        .eq("tenant_id", tenantId)
         .ilike("phone", `%${phoneDigits.slice(-7)}%`)
         .limit(1);
 
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
       const { data: newCust, error: custErr } = await sb
         .from("customers")
         .insert({
-          tenant_id: 1,
+          tenant_id: tenantId,
           customer_name: customerName,
           phone: phone || null,
           service_address: serviceAddress || null,

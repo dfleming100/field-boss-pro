@@ -66,18 +66,20 @@ export async function POST(request: NextRequest) {
     const address = (args.address || "").trim();
     const phone = (args.phone || "").replace(/\D/g, "");
     const name = (args.name || "").trim();
+    const tenantId = args.tenant_id || args.tenantId || 1;
 
     const sb = supabaseAdmin();
 
     let customer: any = null;
 
-    // Search by address — try multiple approaches
+    // Search by address — try multiple approaches (filtered by tenant)
     if (address.length >= 3) {
       // 1. Try exact normalized match
       const normalized = normalizeAddress(address);
       const { data: exactMatch } = await sb
         .from("customers")
         .select("*")
+        .eq("tenant_id", tenantId)
         .ilike("service_address", `%${normalized}%`)
         .limit(1);
       if (exactMatch?.length) customer = exactMatch[0];
@@ -87,6 +89,7 @@ export async function POST(request: NextRequest) {
         const { data: origMatch } = await sb
           .from("customers")
           .select("*")
+          .eq("tenant_id", tenantId)
           .ilike("service_address", `%${address}%`)
           .limit(1);
         if (origMatch?.length) customer = origMatch[0];
@@ -95,14 +98,13 @@ export async function POST(request: NextRequest) {
       // 3. Try matching just the street number + first keyword
       if (!customer) {
         const tokens = getSearchTokens(address);
-        // Get the street number (first token that's a number)
         const streetNum = tokens.find((t) => /^\d+$/.test(t));
-        // Get the first non-number word
         const streetWord = tokens.find((t) => !/^\d+$/.test(t) && t !== "st" && t !== "dr" && t !== "ave" && t !== "blvd" && t !== "rd" && t !== "ln" && t !== "ct");
         if (streetNum && streetWord) {
           const { data: fuzzyMatch } = await sb
             .from("customers")
             .select("*")
+            .eq("tenant_id", tenantId)
             .ilike("service_address", `%${streetNum}%${streetWord}%`)
             .limit(5);
           if (fuzzyMatch?.length) customer = fuzzyMatch[0];
@@ -116,6 +118,7 @@ export async function POST(request: NextRequest) {
       const { data } = await sb
         .from("customers")
         .select("*")
+        .eq("tenant_id", tenantId)
         .or(`phone.ilike.%${last7}%`)
         .limit(1);
       if (data?.length) customer = data[0];
@@ -126,6 +129,7 @@ export async function POST(request: NextRequest) {
       const { data } = await sb
         .from("customers")
         .select("*")
+        .eq("tenant_id", tenantId)
         .ilike("customer_name", `%${name}%`)
         .limit(1);
       if (data?.length) customer = data[0];
