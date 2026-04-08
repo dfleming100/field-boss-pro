@@ -39,8 +39,20 @@ export default function ZoneSettingsPage() {
     setZones([...zones, { id: `new-${Date.now()}`, zone_name: "", zip_codes: [], window_start: "9:00am", window_end: "12:00pm", sort_order: zones.length + 1, is_active: true, isNew: true }]);
   };
 
+  const [zipInputs, setZipInputs] = useState<Record<string, string>>({});
+
   const updateZone = (id: number | string, field: string, value: any) => {
     setZones(zones.map((z) => z.id === id ? { ...z, [field]: value } : z));
+  };
+
+  const updateZipText = (id: number | string, text: string) => {
+    setZipInputs({ ...zipInputs, [String(id)]: text });
+  };
+
+  const getZipText = (zone: Zone) => {
+    const key = String(zone.id);
+    if (zipInputs[key] !== undefined) return zipInputs[key];
+    return zone.zip_codes.join(", ");
   };
 
   const removeZone = (id: number | string) => { setZones(zones.filter((z) => z.id !== id)); };
@@ -51,7 +63,13 @@ export default function ZoneSettingsPage() {
     setError("");
     try {
       await supabase.from("service_zones").delete().eq("tenant_id", tenantUser.tenant_id);
-      const valid = zones.filter((z) => z.zone_name.trim() && z.zip_codes.length > 0);
+      // Parse ZIP text inputs into arrays before saving
+      const zonesWithParsedZips = zones.map((z) => {
+        const key = String(z.id);
+        const zipText = zipInputs[key] !== undefined ? zipInputs[key] : z.zip_codes.join(", ");
+        return { ...z, zip_codes: zipText.split(",").map((s) => s.trim()).filter(Boolean) };
+      });
+      const valid = zonesWithParsedZips.filter((z) => z.zone_name.trim() && z.zip_codes.length > 0);
       if (valid.length > 0) {
         await supabase.from("service_zones").insert(valid.map((z, i) => ({
           tenant_id: tenantUser.tenant_id, zone_name: z.zone_name.trim(), zip_codes: z.zip_codes,
@@ -114,8 +132,8 @@ export default function ZoneSettingsPage() {
                   </div>
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">ZIP Codes ({zone.zip_codes.length})</label>
-                  <input type="text" value={zone.zip_codes.join(", ")} onChange={(e) => updateZone(zone.id, "zip_codes", e.target.value.split(",").map((z) => z.trim()).filter(Boolean))} placeholder="75034, 75033, 75036" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono" />
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">ZIP Codes</label>
+                  <input type="text" value={getZipText(zone)} onChange={(e) => updateZipText(zone.id, e.target.value)} placeholder="75034, 75033, 75036" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono" />
                   <p className="text-xs text-gray-400 mt-1">Comma-separated ZIP codes</p>
                 </div>
               </div>
