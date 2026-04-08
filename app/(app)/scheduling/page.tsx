@@ -362,36 +362,52 @@ function SchedulingContent() {
                   })}
                 </div>
 
-                {/* Time grid */}
-                {HOURS.map((hour) => (
-                  <div key={hour} className="flex border-b border-gray-100 last:border-b-0">
-                    {/* Time label */}
-                    <div className="w-20 flex-shrink-0 border-r border-gray-200 bg-gray-50 px-2 py-3 text-right">
-                      <span className="text-xs text-gray-400">
-                        {hour === 0 ? "12 AM" : hour <= 12 ? `${hour} AM` : `${hour - 12} PM`}
-                        {hour === 12 && "PM"}
-                      </span>
-                    </div>
+                {/* Time grid with spanning appointments */}
+                <div className="flex">
+                  {/* Time labels column */}
+                  <div className="w-20 flex-shrink-0">
+                    {HOURS.map((hour) => (
+                      <div key={hour} className="h-[60px] border-b border-gray-100 border-r border-gray-200 bg-gray-50 px-2 py-1 text-right">
+                        <span className="text-xs text-gray-400">
+                          {hour === 0 ? "12 AM" : hour < 12 ? `${hour} AM` : hour === 12 ? "12 PM" : `${hour - 12} PM`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
 
-                    {/* Tech columns */}
-                    {technicians.map((tech) => {
-                      const color = techColorMap[tech.id];
-                      const appts = getAppts(tech.id, dateStr(currentDate)).filter(
-                        (a) => getTimeSlot(a.start_time) === hour
-                      );
+                  {/* Tech columns with positioned appointments */}
+                  {technicians.map((tech) => {
+                    const color = techColorMap[tech.id];
+                    const techAppts = getAppts(tech.id, dateStr(currentDate));
 
-                      return (
-                        <div
-                          key={tech.id}
-                          className="flex-1 min-w-[180px] min-h-[60px] border-r border-gray-100 last:border-r-0 p-1"
-                        >
-                          {appts.map((appt) => (
+                    return (
+                      <div
+                        key={tech.id}
+                        className="flex-1 min-w-[180px] border-r border-gray-100 last:border-r-0 relative"
+                      >
+                        {/* Hour grid lines */}
+                        {HOURS.map((hour) => (
+                          <div key={hour} className="h-[60px] border-b border-gray-100" />
+                        ))}
+
+                        {/* Appointment cards positioned absolutely */}
+                        {techAppts.map((appt) => {
+                          const startHour = getTimeSlot(appt.start_time);
+                          const startMin = appt.start_time ? parseInt(appt.start_time.split(":")[1] || "0") : 0;
+                          const endHour = appt.end_time ? parseInt(appt.end_time.split(":")[0] || "0") : startHour + 2;
+                          const endMin = appt.end_time ? parseInt(appt.end_time.split(":")[1] || "0") : 0;
+
+                          const topOffset = ((startHour - HOURS[0]) * 60 + startMin);
+                          const duration = ((endHour - startHour) * 60 + (endMin - startMin));
+                          const topPx = topOffset;
+                          const heightPx = Math.max(duration, 30);
+
+                          return (
                             <button
                               key={appt.id}
-                              onClick={() =>
-                                router.push(`/work-orders/${appt.work_order_id}`)
-                              }
-                              className={`w-full text-left ${color.bg} border ${color.border} rounded-lg p-2 mb-1 hover:shadow-md transition`}
+                              onClick={() => router.push(`/work-orders/${appt.work_order_id}`)}
+                              className={`absolute left-1 right-1 ${color.bg} border ${color.border} rounded-lg p-2 hover:shadow-md transition overflow-hidden z-10`}
+                              style={{ top: `${topPx}px`, height: `${heightPx}px` }}
                             >
                               <p className={`text-xs font-semibold ${color.text}`}>
                                 {appt.work_order?.work_order_number || `WO-${appt.work_order_id}`}
@@ -399,7 +415,7 @@ function SchedulingContent() {
                               <p className="text-xs font-medium text-gray-900 truncate mt-0.5">
                                 {appt.customer_name || "Customer"}
                               </p>
-                              {appt.service_address && (
+                              {heightPx > 50 && appt.service_address && (
                                 <p className="text-[11px] text-gray-500 truncate">
                                   {appt.service_address}
                                 </p>
@@ -409,12 +425,12 @@ function SchedulingContent() {
                                 {appt.end_time && ` - ${formatTime(appt.end_time)}`}
                               </p>
                             </button>
-                          ))}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
