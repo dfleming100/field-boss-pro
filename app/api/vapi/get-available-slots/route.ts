@@ -154,8 +154,13 @@ export async function POST(request: NextRequest) {
       .gte("holiday_date", dateStr(new Date()));
 
     const daysOffSet = new Set<string>();
+    const companyDaysOff = new Set<string>();
     for (const row of daysOffRows || []) {
-      daysOffSet.add(`${row.technician_id}-${row.date_off}`);
+      if (row.technician_id) {
+        daysOffSet.add(`${row.technician_id}-${row.date_off}`);
+      } else {
+        companyDaysOff.add(row.date_off);
+      }
     }
     const holidaySet = new Set((holidays || []).map((h: any) => h.holiday_date));
 
@@ -176,6 +181,9 @@ export async function POST(request: NextRequest) {
       // Skip holidays
       if (holidaySet.has(ds)) continue;
 
+      // Skip company-wide days off
+      if (companyDaysOff.has(ds)) continue;
+
       // Skip dates where this WO already has an appointment
       if (currentApptDates.has(ds)) continue;
 
@@ -183,7 +191,7 @@ export async function POST(request: NextRequest) {
         const tech = techLookup[techId];
         if (!tech) continue;
 
-        // Check days off
+        // Check individual tech days off
         if (daysOffSet.has(`${techId}-${ds}`)) continue;
 
         // Check capacity
