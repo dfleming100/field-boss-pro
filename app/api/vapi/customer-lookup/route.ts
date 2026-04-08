@@ -25,8 +25,8 @@ function normalizeAddress(addr: string): string {
   for (const [pattern, replacement] of abbrevs) {
     s = s.replace(pattern, replacement);
   }
-  // Remove extra spaces
-  s = s.replace(/\s+/g, " ").trim();
+  // Remove periods and extra spaces
+  s = s.replace(/\./g, "").replace(/\s+/g, " ").trim();
   return s;
 }
 
@@ -112,15 +112,30 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fallback: search by phone
+    // Fallback: search by phone (try multiple formats)
     if (!customer && phone.length >= 7) {
       const last7 = phone.slice(-7);
+      const last4 = phone.slice(-4);
+      // Try with raw digits
       const { data } = await sb
         .from("customers")
         .select("*")
         .eq("tenant_id", tenantId)
-        .or(`phone.ilike.%${last7}%`)
-        .limit(1);
+        .or(`phone.ilike.%${last7}%,phone.ilike.%${last4}%`)
+        .limit(5);
+
+      // If multiple results from last4, try to narrow down
+      if (data?.length === 1) {
+        customer = data[0];
+      } else if (data && data.length > 1) {
+        // Check if any phone matches when digits-only compared
+        const match = data.find((c: any) => {
+          const dbDigits = (c.phone || "").replace(/\D/g, "");
+          return dbDigits.includes(phone.slice(-7)) || phone.includes(dbDigits.slice(-7));
+        });
+        if (match) customer = match;
+        else customer = data[0];
+      }
       if (data?.length) customer = data[0];
     }
 
