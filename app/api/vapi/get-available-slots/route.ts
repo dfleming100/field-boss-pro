@@ -63,8 +63,10 @@ export async function POST(request: NextRequest) {
       .eq("is_active", true);
 
     let win: [string, string] | null = null;
+    console.log(`[SLOTS] tenant=${tenantId}, zip="${zip}", zones found=${(zones || []).length}`);
     for (const zone of zones || []) {
       const zips = (zone.zip_codes || []).map((z: string) => z.trim());
+      console.log(`[SLOTS] zone=${zone.zone_name}, zips=${JSON.stringify(zips)}, checking "${zip.trim()}", match=${zips.includes(zip.trim())}`);
       if (zips.includes(zip.trim())) {
         win = [zone.window_start, zone.window_end];
         break;
@@ -72,6 +74,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!win) {
+      console.log(`[SLOTS] No zone match for zip "${zip}" in tenant ${tenantId}`);
       return wrapResponse(toolCallId, {
         agent_summary: `I am sorry, ZIP code ${zip || "unknown"} is outside our service area. Please call us at the office to see if we can help.`,
         available_dates: [], tech_id: "", tech_name: "", wo_number: workOrderNumber,
