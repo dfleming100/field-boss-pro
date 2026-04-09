@@ -66,7 +66,21 @@ export async function POST(request: NextRequest) {
     const address = (args.address || "").trim();
     const phone = (args.phone || "").replace(/\D/g, "");
     const name = (args.name || "").trim();
-    const tenantId = args.tenant_id || args.tenantId || 1;
+    let tenantId = args.tenant_id || args.tenantId;
+    if (!tenantId) {
+      const assistantId = raw.message?.call?.assistantId || raw.call?.assistantId || raw.metadata?.assistantId;
+      if (assistantId) {
+        const sb2 = supabaseAdmin();
+        const { data: allVapi } = await sb2
+          .from("tenant_integrations")
+          .select("tenant_id, encrypted_keys")
+          .eq("integration_type", "vapi")
+          .eq("is_configured", true);
+        const match = (allVapi || []).find((v: any) => v.encrypted_keys?.assistantId === assistantId);
+        if (match) tenantId = match.tenant_id;
+      }
+    }
+    if (!tenantId) tenantId = 1;
 
     const sb = supabaseAdmin();
 

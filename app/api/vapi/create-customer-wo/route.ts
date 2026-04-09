@@ -26,24 +26,26 @@ export async function POST(request: NextRequest) {
     const zip = (args.zip || "").trim();
     const phone = (args.phone || "").trim();
     const applianceType = (args.appliance_type || args.applianceType || "").trim();
-    // Try to get tenant_id from: tool args > call metadata > assistant metadata > default
+    // Try to get tenant_id from: tool args > Vapi assistant ID lookup > default
     let tenantId = args.tenant_id || args.tenantId;
-    if (!tenantId && raw.message?.call?.assistantOverrides?.metadata?.tenant_id) {
-      tenantId = raw.message.call.assistantOverrides.metadata.tenant_id;
-    }
-    if (!tenantId && raw.call?.assistantId) {
-      // Look up tenant by Vapi assistant ID
-      const { data: vapiInt } = await supabaseAdmin()
-        .from("tenant_integrations")
-        .select("tenant_id")
-        .eq("integration_type", "vapi")
-        .filter("encrypted_keys->assistantId", "eq", raw.call.assistantId)
-        .limit(1)
-        .single();
-      if (vapiInt) tenantId = vapiInt.tenant_id;
+
+    if (!tenantId) {
+      // Try to find assistant ID from various Vapi request locations
+      const assistantId = raw.message?.call?.assistantId || raw.call?.assistantId || raw.metadata?.assistantId;
+      if (assistantId) {
+        const sb2 = supabaseAdmin();
+        const { data: allVapi } = await sb2
+          .from("tenant_integrations")
+          .select("tenant_id, encrypted_keys")
+          .eq("integration_type", "vapi")
+          .eq("is_configured", true);
+
+        const match = (allVapi || []).find((v: any) => v.encrypted_keys?.assistantId === assistantId);
+        if (match) tenantId = match.tenant_id;
+      }
     }
     if (!tenantId) tenantId = 1;
-    console.log(`[CREATE-WO] tenant_id resolved to: ${tenantId}, args.tenant_id=${args.tenant_id}`);
+    console.log(`[CREATE-WO] tenant_id=${tenantId}, raw keys: ${Object.keys(raw).join(",")}, message keys: ${Object.keys(raw.message || {}).join(",")}`);
 
     if (!customerName) {
       return wrapResponse(toolCallId, { success: false, error: "Customer name is required" });
