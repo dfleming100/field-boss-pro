@@ -138,7 +138,8 @@ export async function POST(request: NextRequest) {
 
     let win: [string, string] | null = null;
     for (const zone of zones || []) {
-      if (zone.zip_codes && zone.zip_codes.includes(zip)) {
+      const zips = (zone.zip_codes || []).map((z: string) => z.trim());
+      if (zips.includes(zip.trim())) {
         win = [zone.window_start, zone.window_end];
         break;
       }
