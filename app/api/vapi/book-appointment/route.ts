@@ -136,12 +136,16 @@ export async function POST(request: NextRequest) {
       .eq("tenant_id", tenantId)
       .eq("is_active", true);
 
-    let win: [string, string] = ["9:00am", "12:00pm"];
+    let win: [string, string] | null = null;
     for (const zone of zones || []) {
       if (zone.zip_codes && zone.zip_codes.includes(zip)) {
         win = [zone.window_start, zone.window_end];
         break;
       }
+    }
+
+    if (!win) {
+      return wrapResponse(toolCallId, { success: false, error: "outside_service_area", message: `ZIP code ${zip} is outside our service area.` });
     }
 
     const startTime = to24h(win[0]);

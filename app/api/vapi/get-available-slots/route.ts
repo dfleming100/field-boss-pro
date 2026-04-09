@@ -62,12 +62,20 @@ export async function POST(request: NextRequest) {
       .eq("tenant_id", tenantId)
       .eq("is_active", true);
 
-    let win: [string, string] = ["9:00am", "12:00pm"]; // default
+    let win: [string, string] | null = null;
     for (const zone of zones || []) {
       if (zone.zip_codes && zone.zip_codes.includes(zip)) {
         win = [zone.window_start, zone.window_end];
         break;
       }
+    }
+
+    if (!win) {
+      return wrapResponse(toolCallId, {
+        agent_summary: `I am sorry, ZIP code ${zip || "unknown"} is outside our service area. Please call us at the office to see if we can help.`,
+        available_dates: [], tech_id: "", tech_name: "", wo_number: workOrderNumber,
+        window_start: "", window_end: "", slot_count: 0,
+      });
     }
 
     // ── Get tech skills from database ──
