@@ -26,7 +26,24 @@ export async function POST(request: NextRequest) {
     const zip = (args.zip || "").trim();
     const phone = (args.phone || "").trim();
     const applianceType = (args.appliance_type || args.applianceType || "").trim();
-    const tenantId = args.tenant_id || args.tenantId || 1;
+    // Try to get tenant_id from: tool args > call metadata > assistant metadata > default
+    let tenantId = args.tenant_id || args.tenantId;
+    if (!tenantId && raw.message?.call?.assistantOverrides?.metadata?.tenant_id) {
+      tenantId = raw.message.call.assistantOverrides.metadata.tenant_id;
+    }
+    if (!tenantId && raw.call?.assistantId) {
+      // Look up tenant by Vapi assistant ID
+      const { data: vapiInt } = await supabaseAdmin()
+        .from("tenant_integrations")
+        .select("tenant_id")
+        .eq("integration_type", "vapi")
+        .filter("encrypted_keys->assistantId", "eq", raw.call.assistantId)
+        .limit(1)
+        .single();
+      if (vapiInt) tenantId = vapiInt.tenant_id;
+    }
+    if (!tenantId) tenantId = 1;
+    console.log(`[CREATE-WO] tenant_id resolved to: ${tenantId}, args.tenant_id=${args.tenant_id}`);
 
     if (!customerName) {
       return wrapResponse(toolCallId, { success: false, error: "Customer name is required" });
