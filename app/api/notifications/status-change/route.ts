@@ -178,9 +178,14 @@ export async function POST(request: NextRequest) {
         if (!vapiKeys.apiKey || !vapiKeys.assistantId) {
           vapiResult = { skipped: true, reason: "Vapi not configured" };
         } else {
+          // firstMessage uses Liquid template variables so Claude reads
+          // values straight from variableValues instead of paraphrasing or
+          // re-inferring them from inline text. Work order number is
+          // intentionally omitted from speech — available in variables if
+          // the assistant needs it for a tool call.
           const vapiFirstMessage = new_status === "Parts Have Arrived"
-            ? `Hi ${firstName}, this is Fleming Appliance Repair calling about your ${appliance} repair at ${address}. Your parts have arrived and we would like to schedule your repair follow-up appointment. We have your work order ${woNum} ready to go. Do you have a moment to pick a date?`
-            : `Hi ${firstName}, this is Fleming Appliance Repair calling about your ${appliance} service at ${address}. We have your work order ${woNum} and would like to schedule your appointment. Do you have a moment to pick a date?`;
+            ? `Hi {{customer_name}}, this is Fleming Appliance Repair calling about your {{appliance_type}} repair at {{service_address}}. Your parts have arrived and we would like to schedule your repair follow-up appointment. Do you have a moment to pick a date?`
+            : `Hi {{customer_name}}, this is Fleming Appliance Repair calling about your {{appliance_type}} service at {{service_address}}. We would like to schedule your appointment. Do you have a moment to pick a date?`;
 
           try {
             const vapiRes = await fetch("https://api.vapi.ai/call", {
@@ -195,22 +200,23 @@ export async function POST(request: NextRequest) {
                 phoneNumberId: vapiKeys.phoneNumberId || undefined,
                 assistantOverrides: {
                   firstMessage: vapiFirstMessage,
-                  // variableValues are first-class template variables the
-                  // assistant's system prompt can reference as {{address}},
-                  // {{customer_name}}, etc. — the LLM treats these as hard
-                  // facts, unlike metadata which is advisory.
+                  // First-class Liquid template variables — the assistant's
+                  // system prompt and firstMessage reference these as
+                  // {{customer_name}}, {{service_address}}, etc. The LLM
+                  // treats them as hard facts. Boolean branching (e.g.
+                  // outbound flag) lives in metadata instead since Liquid
+                  // string truthiness can be misleading.
                   variableValues: {
                     customer_name: customer.customer_name || "",
-                    address: address || "",
+                    service_address: address || "",
                     work_order_number: woNum || "",
                     appliance_type: appliance || "",
                     status: new_status,
                     job_type: wo.job_type || "",
-                    outbound: "true",
                   },
                   metadata: {
                     customer_name: customer.customer_name,
-                    address,
+                    service_address: address,
                     work_order_number: woNum,
                     appliance_type: appliance,
                     status: new_status,
