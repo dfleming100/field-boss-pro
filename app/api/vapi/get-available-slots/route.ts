@@ -223,8 +223,9 @@ export async function POST(request: NextRequest) {
     const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
     const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
     const fmtDate = (ds: string): string => {
-      const dt = new Date(ds + "T12:00:00");
-      return `${dayNames[dt.getDay()]}, ${months[dt.getMonth()]} ${dt.getDate()}`;
+      // Parse as UTC noon so day-of-week is server-TZ-independent
+      const dt = new Date(ds + "T12:00:00Z");
+      return `${dayNames[dt.getUTCDay()]}, ${months[dt.getUTCMonth()]} ${dt.getUTCDate()}`;
     };
 
     let agentSummary: string;

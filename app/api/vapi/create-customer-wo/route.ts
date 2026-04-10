@@ -89,12 +89,16 @@ export async function POST(request: NextRequest) {
       customerId = newCust.id;
     }
 
+    // Use customer's tenant_id as the reliable source
+    const { data: custCheck } = await sb.from("customers").select("tenant_id").eq("id", customerId).single();
+    const finalTenantId = custCheck?.tenant_id || tenantId;
+
     // Create work order
     const woNumber = `WO-${Date.now().toString().slice(-6)}`;
     const { data: wo, error: woErr } = await sb
       .from("work_orders")
       .insert({
-        tenant_id: 1,
+        tenant_id: finalTenantId,
         customer_id: customerId,
         work_order_number: woNumber,
         appliance_type: applianceType || null,
@@ -110,7 +114,7 @@ export async function POST(request: NextRequest) {
     if (applianceType) {
       await sb.from("appliance_details").insert({
         work_order_id: wo.id,
-        tenant_id: 1,
+        tenant_id: finalTenantId,
         item: applianceType,
         sort_order: 1,
       });

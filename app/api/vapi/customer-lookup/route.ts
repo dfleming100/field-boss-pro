@@ -234,9 +234,12 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (appt) {
-        const d = new Date(appt.appointment_date + "T12:00:00");
+        // Parse as UTC noon so day-of-week is deterministic regardless of server TZ
+        const d = new Date(appt.appointment_date + "T12:00:00Z");
         const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-        const dateDisplay = `${months[d.getMonth()]} ${d.getDate()}`;
+        const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+        // Use UTC getters since we parsed as UTC noon
+        const dateDisplay = `${dayNames[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
         enrichedAppt = {
           date: appt.appointment_date,
           date_display: dateDisplay,

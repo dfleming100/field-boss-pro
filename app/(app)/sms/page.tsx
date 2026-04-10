@@ -180,9 +180,18 @@ export default function SMSCommandCenter() {
     }
   };
 
+  // Supabase returns timestamps without a timezone marker (e.g. "2026-04-10 19:37:46.942871").
+  // JavaScript would parse that as LOCAL time, but the value is actually UTC — so we
+  // normalize by appending "Z" when no offset is present.
+  const parseUtc = (ts: string): Date => {
+    const hasOffset = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(ts);
+    const normalized = hasOffset ? ts : ts.replace(" ", "T") + "Z";
+    return new Date(normalized);
+  };
+
   // Format timestamp
   const formatTime = (ts: string) => {
-    const d = new Date(ts);
+    const d = parseUtc(ts);
     const now = new Date();
     const diffMs = now.getTime() - d.getTime();
     const diffMins = Math.floor(diffMs / 60000);
@@ -193,14 +202,18 @@ export default function SMSCommandCenter() {
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return d.toLocaleDateString("en-US", {
+      month: "short", day: "numeric",
+      timeZone: "America/Chicago",
+    });
   };
 
   const formatFullTime = (ts: string) => {
-    const d = new Date(ts);
+    const d = parseUtc(ts);
     return d.toLocaleString("en-US", {
       month: "short", day: "numeric", year: "numeric",
       hour: "numeric", minute: "2-digit",
+      timeZone: "America/Chicago",
     });
   };
 

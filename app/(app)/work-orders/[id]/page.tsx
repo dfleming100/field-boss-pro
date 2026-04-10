@@ -41,7 +41,11 @@ interface ApplianceDetail {
   item: string;
   model: string;
   serial_number: string;
+  age_of_unit: string;
+  symptoms: string;
   diagnosis: string;
+  cause_of_issue: string;
+  the_fix: string;
   parts: string;
   sort_order: number;
   isNew?: boolean;
@@ -191,7 +195,11 @@ export default function WorkOrderDetailPage() {
             item: a.item || null,
             model: a.model || null,
             serial_number: a.serial_number || null,
+            age_of_unit: a.age_of_unit || null,
+            symptoms: a.symptoms || null,
             diagnosis: a.diagnosis || null,
+            cause_of_issue: a.cause_of_issue || null,
+            the_fix: a.the_fix || null,
             parts: a.parts || null,
             sort_order: i + 1,
           }))
@@ -766,7 +774,8 @@ export default function WorkOrderDetailPage() {
                 <button
                   onClick={() => setAppliances([...appliances, {
                     id: `new-${Date.now()}`, make: "", item: "", model: "",
-                    serial_number: "", diagnosis: "", parts: "",
+                    serial_number: "", age_of_unit: "", symptoms: "", diagnosis: "",
+                    cause_of_issue: "", the_fix: "", parts: "",
                     sort_order: appliances.length + 1, isNew: true,
                   }])}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100"
@@ -783,7 +792,8 @@ export default function WorkOrderDetailPage() {
                 <button
                   onClick={() => setAppliances([{
                     id: `new-${Date.now()}`, make: "", item: "", model: "",
-                    serial_number: "", diagnosis: "", parts: "",
+                    serial_number: "", age_of_unit: "", symptoms: "", diagnosis: "",
+                    cause_of_issue: "", the_fix: "", parts: "",
                     sort_order: 1, isNew: true,
                   }])}
                   className="text-sm text-indigo-600 font-medium hover:text-indigo-700"
@@ -804,12 +814,12 @@ export default function WorkOrderDetailPage() {
                         Remove
                       </button>
                     </div>
-                    <div className="grid grid-cols-4 gap-3 mb-3">
+                    <div className="grid grid-cols-5 gap-3 mb-3">
                       <div>
                         <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Make</label>
                         <input
                           type="text"
-                          value={appl.make}
+                          value={appl.make || ""}
                           onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, make: e.target.value } : a))}
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
                           placeholder="Samsung"
@@ -818,7 +828,7 @@ export default function WorkOrderDetailPage() {
                       <div>
                         <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Item</label>
                         <select
-                          value={appl.item}
+                          value={appl.item || ""}
                           onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, item: e.target.value } : a))}
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
                         >
@@ -836,6 +846,7 @@ export default function WorkOrderDetailPage() {
                           <option value="Garbage Disposal">Garbage Disposal</option>
                           <option value="Range Hood">Range Hood</option>
                           <option value="Wine Cooler">Wine Cooler</option>
+                          <option value="Trash Compactor">Trash Compactor</option>
                           <option value="Other">Other</option>
                         </select>
                       </div>
@@ -843,7 +854,7 @@ export default function WorkOrderDetailPage() {
                         <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Model</label>
                         <input
                           type="text"
-                          value={appl.model}
+                          value={appl.model || ""}
                           onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, model: e.target.value } : a))}
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
                           placeholder="Model #"
@@ -853,18 +864,39 @@ export default function WorkOrderDetailPage() {
                         <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Serial #</label>
                         <input
                           type="text"
-                          value={appl.serial_number}
+                          value={appl.serial_number || ""}
                           onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, serial_number: e.target.value } : a))}
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
                           placeholder="Serial #"
                         />
                       </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Age of Unit</label>
+                        <select
+                          value={appl.age_of_unit || ""}
+                          onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, age_of_unit: e.target.value } : a))}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                        >
+                          <option value="">Select...</option>
+                          <option value="< 1 year">{"< 1 year"}</option>
+                          <option value="1-5 years">1-5 years</option>
+                          <option value="5-10 years">5-10 years</option>
+                          <option value="10+ years">10+ years</option>
+                          <option value="Unknown">Unknown</option>
+                        </select>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    {appl.symptoms && (
+                      <div className="mb-3">
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Symptoms (from customer)</label>
+                        <p className="text-sm text-gray-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{appl.symptoms}</p>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-3 mb-3">
                       <div>
                         <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Diagnosis</label>
                         <textarea
-                          value={appl.diagnosis}
+                          value={appl.diagnosis || ""}
                           onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, diagnosis: e.target.value } : a))}
                           rows={2}
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
@@ -872,13 +904,44 @@ export default function WorkOrderDetailPage() {
                         />
                       </div>
                       <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Cause of Issue</label>
+                        <select
+                          value={appl.cause_of_issue || ""}
+                          onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, cause_of_issue: e.target.value } : a))}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                        >
+                          <option value="">Select...</option>
+                          <option value="Normal Wear">Normal Wear</option>
+                          <option value="Defective Part">Defective Part</option>
+                          <option value="Electrical Issue">Electrical Issue</option>
+                          <option value="Improper Installation">Improper Installation</option>
+                          <option value="Lack of Maintenance">Lack of Maintenance</option>
+                          <option value="Customer Misuse">Customer Misuse</option>
+                          <option value="Power Surge">Power Surge</option>
+                          <option value="Water Damage">Water Damage</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">The Fix</label>
+                        <textarea
+                          value={appl.the_fix || ""}
+                          onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, the_fix: e.target.value } : a))}
+                          rows={2}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                          placeholder="What was done to fix it..."
+                        />
+                      </div>
+                      <div>
                         <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Parts</label>
                         <textarea
-                          value={appl.parts}
+                          value={appl.parts || ""}
                           onChange={(e) => setAppliances(appliances.map((a) => a.id === appl.id ? { ...a, parts: e.target.value } : a))}
                           rows={2}
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-                          placeholder="Parts needed..."
+                          placeholder="Parts needed/used..."
                         />
                       </div>
                     </div>

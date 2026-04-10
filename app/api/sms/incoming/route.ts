@@ -5,12 +5,13 @@ import { supabaseAdmin } from "@/lib/supabase";
  * POST /api/sms/incoming
  * Twilio webhook — receives inbound SMS from customers.
  * Full processing loop:
- * 1. Look up customer in Supabase by phone
- * 2. Find active work order
- * 3. Get available slots
- * 4. Send context to Claude Haiku for intent classification
- * 5. Take action (book, reply info, etc.)
- * 6. Send reply SMS via Twilio
+ * 1. Resolve tenant from Twilio "To" phone number
+ * 2. Look up customer in Supabase by phone
+ * 3. Find active work order
+ * 4. Get available slots
+ * 5. Send context to Claude Haiku for intent classification
+ * 6. Take action (book, reply info, etc.)
+ * 7. Send reply SMS via Twilio
  */
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
@@ -20,12 +21,50 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const from = formData.get("From")?.toString() || "";
+    const to = formData.get("To")?.toString() || "";
     const body = formData.get("Body")?.toString() || "";
     const messageSid = formData.get("MessageSid")?.toString() || "";
 
-    console.log(`[SMS] From: ${from}, Body: "${body}"`);
+    console.log(`[SMS] From: ${from}, To: ${to}, Body: "${body}"`);
 
     const sb = supabaseAdmin();
+
+    // ── Resolve tenant from the Twilio "To" phone number ──
+    const toDigits = to.replace(/\D/g, "");
+    let tenantId: number | null = null;
+    let twilioIntegration: any = null;
+    let tenantInfo: { name: string; phone: string } = { name: "", phone: "" };
+
+    const { data: allTwilio } = await sb
+      .from("tenant_integrations")
+      .select("tenant_id, encrypted_keys")
+      .eq("integration_type", "twilio")
+      .eq("is_configured", true);
+
+    for (const row of allTwilio || []) {
+      const storedPhone = ((row.encrypted_keys as any)?.phoneNumber || "").replace(/\D/g, "");
+      if (storedPhone && toDigits.endsWith(storedPhone.slice(-10))) {
+        tenantId = row.tenant_id;
+        twilioIntegration = row;
+        break;
+      }
+    }
+
+    if (!tenantId) {
+      console.error(`[SMS] No tenant found for To number: ${to}`);
+      tenantId = 1; // fallback
+    }
+
+    // Fetch tenant info for dynamic prompt
+    const { data: tenant } = await sb
+      .from("tenants")
+      .select("name, phone")
+      .eq("id", tenantId)
+      .single();
+
+    if (tenant) {
+      tenantInfo = { name: tenant.name || "", phone: tenant.phone || "" };
+    }
 
     // Normalize phone
     const fromDigits = from.replace(/\D/g, "");
@@ -35,39 +74,41 @@ export async function POST(request: NextRequest) {
 
     // Store inbound message in conversation history
     await sb.from("sms_conversations").insert({
-      tenant_id: 1,
+      tenant_id: tenantId,
       phone: from,
       direction: "inbound",
       body,
       message_sid: messageSid,
     });
 
-    // Fetch recent conversation history (last 10 messages)
+    // Fetch recent conversation history (last 10 messages, filtered by tenant)
     const { data: convHistory } = await sb
       .from("sms_conversations")
       .select("direction, body, created_at")
       .eq("phone", from)
+      .eq("tenant_id", tenantId)
       .order("created_at", { ascending: false })
       .limit(10);
 
     // Build conversation thread (oldest first)
+    const companyLabel = tenantInfo.name || "Company";
     const conversationThread = (convHistory || [])
       .reverse()
-      .map((msg: any) => `${msg.direction === "inbound" ? "Customer" : "Fleming"}: ${msg.body}`)
+      .map((msg: any) => `${msg.direction === "inbound" ? "Customer" : companyLabel}: ${msg.body}`)
       .join("\n");
 
     // 0. Fetch tenant's serviced appliances from skills table
     const { data: skillsData } = await sb
       .from("tech_skills")
       .select("appliance_type")
-      .eq("tenant_id", 1);
+      .eq("tenant_id", tenantId);
     const servicedAppliances = [...new Set((skillsData || []).map((s: any) => s.appliance_type))].join(", ");
 
-    // 1. Customer lookup in Supabase
+    // 1. Customer lookup in Supabase (pass tenant_id)
     const lookupRes = await fetch(`${APP_URL}/api/vapi/customer-lookup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: searchDigits }),
+      body: JSON.stringify({ phone: searchDigits, tenant_id: tenantId }),
     });
     const customerData = await lookupRes.json();
 
@@ -83,7 +124,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 3. Build Claude prompt and get intent (with conversation history)
-    const aiResult = await classifyIntent(body, customerData, slotsData, conversationThread, servicedAppliances);
+    const aiResult = await classifyIntent(body, customerData, slotsData, conversationThread, servicedAppliances, tenantInfo);
 
     // 4. Take action
     let replyText = aiResult.reply;
@@ -95,7 +136,7 @@ export async function POST(request: NextRequest) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            tenant_id: 1,
+            tenant_id: tenantId,
             phone: from,
             customer_name: aiResult.customer_name,
             service_address: aiResult.service_address || "",
@@ -126,7 +167,7 @@ export async function POST(request: NextRequest) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            tenant_id: 1,
+            tenant_id: tenantId,
             phone: from,
             existing_customer_id: customerData.customer_id,
             appliance_type: aiResult.appliance_type,
@@ -165,7 +206,7 @@ export async function POST(request: NextRequest) {
         });
         const bookData = await bookRes.json();
         if (!bookData.success) {
-          replyText = `Sorry, that date is not available. ${slotsData?.agent_summary || "Please call (855) 269-3196."}`;
+          replyText = `Sorry, that date is not available. ${slotsData?.agent_summary || `Please call us at ${tenantInfo.phone || "the office"}.`}`;
         }
       } else {
         // Date not in available list — override with info
@@ -180,17 +221,20 @@ export async function POST(request: NextRequest) {
     }
 
     // 5. Send reply SMS via Twilio
-    const tenantId = customerData.found ? customerData.customer_id : 1;
-    const { data: integration } = await sb
-      .from("tenant_integrations")
-      .select("encrypted_keys")
-      .eq("tenant_id", 1)
-      .eq("integration_type", "twilio")
-      .eq("is_configured", true)
-      .single();
+    // Use the already-found integration, or look it up
+    if (!twilioIntegration) {
+      const { data: integration } = await sb
+        .from("tenant_integrations")
+        .select("encrypted_keys")
+        .eq("tenant_id", tenantId)
+        .eq("integration_type", "twilio")
+        .eq("is_configured", true)
+        .single();
+      twilioIntegration = integration;
+    }
 
-    if (integration && replyText) {
-      const creds = integration.encrypted_keys as any;
+    if (twilioIntegration && replyText) {
+      const creds = twilioIntegration.encrypted_keys as any;
       const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Messages.json`;
       const basicAuth = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString("base64");
 
@@ -209,7 +253,7 @@ export async function POST(request: NextRequest) {
 
       // Store outbound in conversation history
       await sb.from("sms_conversations").insert({
-        tenant_id: 1,
+        tenant_id: tenantId,
         phone: from,
         direction: "outbound",
         body: replyText,
@@ -217,7 +261,7 @@ export async function POST(request: NextRequest) {
 
       // Log outbound
       await sb.from("sms_logs").insert({
-        tenant_id: 1,
+        tenant_id: tenantId,
         recipient_phone: from,
         message_type: `reply_${aiResult.action}`,
         status: "sent",
@@ -227,7 +271,7 @@ export async function POST(request: NextRequest) {
 
     // Log inbound
     await sb.from("sms_logs").insert({
-      tenant_id: 1,
+      tenant_id: tenantId,
       recipient_phone: from,
       message_type: "inbound",
       status: "received",
@@ -254,10 +298,14 @@ async function classifyIntent(
   customer: any,
   slots: any,
   conversationThread?: string,
-  servicedAppliances?: string
+  servicedAppliances?: string,
+  tenantInfo?: { name: string; phone: string }
 ): Promise<{ action: string; reply: string; chosen_date?: string; tech_id?: string; customer_name?: string; service_address?: string; city?: string; state?: string; zip?: string; appliance_type?: string }> {
+  const companyName = tenantInfo?.name || "our company";
+  const companyPhone = tenantInfo?.phone || "the office";
+
   if (!ANTHROPIC_API_KEY) {
-    return { action: "unclear", reply: "Thanks for reaching out! Please call us at (855) 269-3196." };
+    return { action: "unclear", reply: `Thanks for reaching out! Please call us at ${companyPhone}.` };
   }
 
   const isNewCustomer = !customer.found;
@@ -267,14 +315,14 @@ async function classifyIntent(
   const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const todayName = dayNames[new Date().getDay()];
 
-  const prompt = `You are a friendly SMS assistant for Fleming Appliance Repair. Return ONLY valid JSON. No markdown, no backticks.
+  const prompt = `You are a friendly SMS assistant for ${companyName}. Return ONLY valid JSON. No markdown, no backticks.
 
 Today: ${today} (${todayName})
 ${conversationThread ? `
 CONVERSATION HISTORY (most recent messages):
 ${conversationThread}
 
-The LATEST message from the customer is what you are responding to. Use the conversation history to understand context — for example, if Fleming just offered dates and the customer says "yes" or "the 7th", they are responding to that offer.
+The LATEST message from the customer is what you are responding to. Use the conversation history to understand context — for example, if ${companyName} just offered dates and the customer says "yes" or "the 7th", they are responding to that offer.
 ` : ""}
 LATEST MESSAGE FROM CUSTOMER: "${smsBody}"
 IS NEW CUSTOMER (not in our system): ${isNewCustomer ? "YES" : "NO"}
@@ -317,14 +365,15 @@ ${slots ? `SCHEDULING DATA:
 - Agent Summary: ${slots.agent_summary || ""}
 ` : ""}
 CONVERSATION CONTEXT:
-Use the conversation history above to understand follow-up messages. If the customer says "yes", "the 7th", "ok", etc., look at what Fleming last said to understand what they are responding to.
+Use the conversation history above to understand follow-up messages. If the customer says "yes", "the 7th", "ok", etc., look at what ${companyName} last said to understand what they are responding to.
 
 CRITICAL RULE — STATUS-AWARE RESPONSES:
 
 If Status is "Scheduled":
-- For greetings ("hi", "hello", "hey") or vague messages: Say "Hi [name], we have your [appliance] [job type] scheduled for [date] between [window]. How can I help you?" Action: "info"
-- For date mentions ("Monday", "the 7th", "April 10") or "yes"/"that works": This means they want to RESCHEDULE to that date. Convert to YYYY-MM-DD, verify it is in the Available Dates list, and return action "book".
+- For greetings ("hi", "hello", "hey") or vague messages: Say "Hi [name], we have your [appliance] [job type] scheduled for [date] between [window]. Let us know if you need to reschedule or have any questions." Action: "info"
+- For EXPLICIT date mentions ("Monday", "the 7th", "April 10") that differ from the current appointment: This means they want to RESCHEDULE to that date. Convert to YYYY-MM-DD, verify it is in the Available Dates list, and return action "book".
 - For "reschedule" or "change my appointment": Offer the first 3 available dates. Action: "reschedule"
+- For ambiguous replies like "yes", "ok", "sure", "schedule it", "let's schedule": The customer is ALREADY scheduled — do NOT reschedule. Instead reply "Hi [name], you already have your [appliance] appointment on [date] between [window]. Would you like to keep this appointment or pick a different day?" Action: "info"
 
 If Status is "Parts Have Arrived":
 - For greetings: Say "Hi [name], your parts have arrived for your [appliance] service at [address]! Would you like to schedule?" Action: "info"
@@ -362,9 +411,8 @@ Reply: "No problem, [name]. Your technician will do his best to accommodate you.
 Action: "info"
 
 REVIEW RESPONSE — Customer replies with a number 1-5 (responding to a review request)
-- If 4 or 5: Reply "Thank you so much, [name]! We really appreciate your feedback. If you have a moment, we would love a Google review: https://g.page/r/CVYj6jx45yHJEAI/review" Action: "review"
+- If 4 or 5: Reply "Thank you so much, [name]! We really appreciate your feedback. If you have a moment, we would love a Google review!" Action: "review"
 - If 1, 2, or 3: Reply "Thank you for your feedback, [name]. We appreciate you letting us know." Action: "review"
-- Do NOT include the Google review link for scores 1-3.
 
 PARTS STATUS — "When will my parts come?", "Any update on parts?"
 Look at the WO status:
@@ -377,23 +425,23 @@ Reply: "Hi [name], our office hours are Monday through Friday, 8am to 5pm. How c
 Action: "info"
 
 SERVICE AREA — "Do you service my area?", "What area do you cover?", "Do you come to [city]?"
-Reply: "Hi [name], we service Frisco, Allen, Carrollton, Plano, McKinney, Prosper, and other cities in between. Give me your ZIP code and I can tell you if we service your area!"
+Reply: "Hi [name], give me your ZIP code and I can check if we service your area!"
 Action: "info"
 
 CALLBACK / SAME ISSUE — "It is doing the same thing", "It broke again", "Same problem"
-Reply: "We are sorry to hear your [appliance] is still having issues, [name]. Please contact your home warranty company and request a recall for Fleming Appliance. Once they issue the recall, we will get you scheduled right away. If you have any questions, call us at (855) 269-3196."
+Reply: "We are sorry to hear your [appliance] is still having issues, [name]. Please contact your home warranty company and request a recall for ${companyName}. Once they issue the recall, we will get you scheduled right away. If you have any questions, call us at ${companyPhone}."
 Action: "callback"
 
 ESCALATE — "I want to talk to someone", "I want a manager"
-Reply: "We understand your concern, [name]. We will forward your message to our team and someone will reach out to you. You can also reach us directly at (855) 269-3196."
+Reply: "We understand your concern, [name]. We will forward your message to our team and someone will reach out to you. You can also reach us directly at ${companyPhone}."
 Action: "escalate"
 
 CANCEL — "Cancel my appointment", "I do not need service"
-Reply: "No problem, [name]. We have noted your cancellation request for your [appliance] service. If you change your mind or need anything in the future, just text us or call (855) 269-3196."
+Reply: "No problem, [name]. We have noted your cancellation request for your [appliance] service. If you change your mind or need anything in the future, just text us or call ${companyPhone}."
 Action: "cancel"
 
 OPT OUT — "STOP", "unsubscribe"
-Reply: "No problem! If you change your mind, just text us back or call (855) 269-3196."
+Reply: "No problem! If you change your mind, just text us back or call ${companyPhone}."
 Action: "optout"
 
 GENERAL RULES:
@@ -403,7 +451,7 @@ GENERAL RULES:
 - When listing dates, list only the first 3 then say "We have more dates available after that as well."
 - NEVER return "book" for a date not in the Available Dates list. If the date they mention is NOT in the list, return "info" with available dates instead.
 - Always include the customer's name
-- "yes", "ok", "sure", "that works" in response to a date offer = they want the EARLIEST available date. Return action "book" with the first date from Available Dates.
+- "yes", "ok", "sure", "that works" ONLY count as booking intent if Company just offered specific dates in the previous message. Check the CONVERSATION HISTORY — if Company's most recent message offered dates, return action "book" with the first Available Date. If there was NO recent date offer, treat "yes" as ambiguous and respond with action "info" asking what they want to do.
 
 ACTIONS — return JSON:
 
@@ -416,7 +464,7 @@ ACTIONS — return JSON:
 7. "callback" — Same issue after repair. Return: {"action": "callback", "reply": "contact warranty company for recall"}
 8. "escalate" — Wants a human. Return: {"action": "escalate", "reply": "we will forward to team"}
 9. "cancel" — Wants to cancel. Return: {"action": "cancel", "reply": "cancellation confirmed"}
-10. "review" — Reply to a review request (number 1-5). Return: {"action": "review", "reply": "thank you message, include Google link only for 4-5"}
+10. "review" — Reply to a review request (number 1-5). Return: {"action": "review", "reply": "thank you message"}
 11. "optout" — STOP/unsubscribe. Return: {"action": "optout", "reply": "opted out message"}
 12. "unclear" — Truly cannot determine intent. Return: {"action": "unclear", "reply": "friendly prompt to clarify"}
 
@@ -443,7 +491,7 @@ Return ONLY valid JSON.`;
     // Extract JSON from response
     const jsonStart = rawText.indexOf("{");
     if (jsonStart === -1) {
-      return { action: "unclear", reply: "Thanks for reaching out! Please call us at (855) 269-3196." };
+      return { action: "unclear", reply: `Thanks for reaching out! Please call us at ${companyPhone}.` };
     }
 
     let depth = 0;
@@ -477,7 +525,7 @@ Return ONLY valid JSON.`;
 
     return {
       action: parsed.action || "unclear",
-      reply: parsed.reply || "Thanks for reaching out! Please call us at (855) 269-3196.",
+      reply: parsed.reply || `Thanks for reaching out! Please call us at ${companyPhone}.`,
       chosen_date: parsed.chosen_date,
       tech_id: parsed.tech_id,
       customer_name: parsed.customer_name,
@@ -489,6 +537,6 @@ Return ONLY valid JSON.`;
     };
   } catch (err) {
     console.error("[SMS] Claude API error:", err);
-    return { action: "unclear", reply: "We are having trouble right now. Please call us at (855) 269-3196." };
+    return { action: "unclear", reply: `We are having trouble right now. Please call us at ${companyPhone}.` };
   }
 }
