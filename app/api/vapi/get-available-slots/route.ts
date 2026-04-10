@@ -26,17 +26,30 @@ export async function POST(request: NextRequest) {
     const workOrderNumber = (args.work_order_number || args.workOrderNumber || "").trim();
     const sb = supabaseAdmin();
 
-    // Find work order
-    const { data: wo } = await sb
-      .from("work_orders")
-      .select(`
-        *,
-        customer:customers(zip),
-        technician:technicians!assigned_technician_id(id, tech_name)
-      `)
-      .eq("work_order_number", workOrderNumber)
-      .limit(1)
-      .single();
+    // Build lookup candidates — the LLM may pass "1005", "WO-1005", or even "wo 1005".
+    // Try the exact value first, then try with/without the "WO-" prefix as fallbacks.
+    const digitsOnly = workOrderNumber.replace(/\D/g, "");
+    const candidates = [
+      workOrderNumber,
+      `WO-${digitsOnly}`,
+      digitsOnly,
+    ].filter((v, i, arr) => v && arr.indexOf(v) === i);
+
+    // Find work order (try each candidate until a match is found)
+    let wo: any = null;
+    for (const candidate of candidates) {
+      const { data } = await sb
+        .from("work_orders")
+        .select(`
+          *,
+          customer:customers(zip),
+          technician:technicians!assigned_technician_id(id, tech_name)
+        `)
+        .eq("work_order_number", candidate)
+        .limit(1)
+        .maybeSingle();
+      if (data) { wo = data; break; }
+    }
 
     if (!wo) {
       return wrapResponse(toolCallId, {

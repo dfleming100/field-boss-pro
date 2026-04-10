@@ -36,17 +36,29 @@ export async function POST(request: NextRequest) {
 
     const sb = supabaseAdmin();
 
+    // Accept "1005", "WO-1005", or "wo 1005" — try exact then strip/add prefix.
+    const digitsOnly = workOrderNumber.replace(/\D/g, "");
+    const candidates = [
+      workOrderNumber,
+      `WO-${digitsOnly}`,
+      digitsOnly,
+    ].filter((v, i, arr) => v && arr.indexOf(v) === i);
+
     // Find work order
-    const { data: wo } = await sb
-      .from("work_orders")
-      .select(`
-        *,
-        customer:customers(zip),
-        technician:technicians!assigned_technician_id(id, tech_name, max_daily_appointments, max_daily_repairs)
-      `)
-      .eq("work_order_number", workOrderNumber)
-      .limit(1)
-      .single();
+    let wo: any = null;
+    for (const candidate of candidates) {
+      const { data } = await sb
+        .from("work_orders")
+        .select(`
+          *,
+          customer:customers(zip),
+          technician:technicians!assigned_technician_id(id, tech_name, max_daily_appointments, max_daily_repairs)
+        `)
+        .eq("work_order_number", candidate)
+        .limit(1)
+        .maybeSingle();
+      if (data) { wo = data; break; }
+    }
 
     if (!wo) {
       return wrapResponse(toolCallId, { success: false, error: "Work order not found" });

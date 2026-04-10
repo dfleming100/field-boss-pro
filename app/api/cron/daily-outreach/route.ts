@@ -150,6 +150,18 @@ export async function GET(request: NextRequest) {
               phoneNumberId: vapiKeys.phoneNumberId || undefined,
               assistantOverrides: {
                 firstMessage: vapiFirstMessage,
+                // First-class template variables — the assistant's system
+                // prompt can reference these as {{address}}, {{customer_name}},
+                // etc. The LLM treats these as hard facts.
+                variableValues: {
+                  customer_name: customer.customer_name || "",
+                  address: address || "",
+                  work_order_number: woNum || "",
+                  appliance_type: appliance || "",
+                  status: wo.status,
+                  job_type: wo.job_type || "",
+                  outbound: "true",
+                },
                 metadata: {
                   customer_name: customer.customer_name,
                   address: address,
