@@ -76,6 +76,10 @@ export async function POST(request: NextRequest) {
     let smsBody: string | null = null;
 
     switch (new_status) {
+      case "New":
+        smsBody = `Hi ${firstName}, this is Fleming Appliance Repair. We are ready to schedule your ${appliance} service (WO #${woNum}). Reply or call (855) 269-3196 to book a time. - Fleming Appliance`;
+        break;
+
       case "Scheduled": {
         // Fetch the latest appointment for window info
         const { data: appt } = await sb
@@ -149,12 +153,112 @@ export async function POST(request: NextRequest) {
       error_message: twilioRes.ok ? null : JSON.stringify(twilioData),
     });
 
+    // ── Immediate Vapi outbound call for New / Parts Have Arrived ──
+    // Fires within 8am–8:30pm CT. Outside those hours, skip —
+    // the 8am and 9am/3pm crons on /api/cron/daily-outreach will catch it.
+    let vapiResult: any = null;
+    if (new_status === "New" || new_status === "Parts Have Arrived") {
+      const nowCt = new Date();
+      const ctHour = parseInt(nowCt.toLocaleString("en-US", { timeZone: "America/Chicago", hour: "numeric", hour12: false }));
+      const ctMin = parseInt(nowCt.toLocaleString("en-US", { timeZone: "America/Chicago", minute: "numeric" }));
+      const inBusinessHours = ctHour >= 8 && ctHour <= 20 && !(ctHour === 20 && ctMin >= 30);
+
+      if (!inBusinessHours) {
+        vapiResult = { skipped: true, reason: "Outside business hours — cron will fire next" };
+      } else {
+        const { data: vapiInt } = await sb
+          .from("tenant_integrations")
+          .select("encrypted_keys")
+          .eq("tenant_id", tenant_id)
+          .eq("integration_type", "vapi")
+          .eq("is_configured", true)
+          .single();
+
+        const vapiKeys = (vapiInt?.encrypted_keys as any) || {};
+        if (!vapiKeys.apiKey || !vapiKeys.assistantId) {
+          vapiResult = { skipped: true, reason: "Vapi not configured" };
+        } else {
+          const vapiFirstMessage = new_status === "Parts Have Arrived"
+            ? `Hi ${firstName}, this is Fleming Appliance Repair calling about your ${appliance} repair at ${address}. Your parts have arrived and we would like to schedule your repair follow-up appointment. We have your work order ${woNum} ready to go. Do you have a moment to pick a date?`
+            : `Hi ${firstName}, this is Fleming Appliance Repair calling about your ${appliance} service at ${address}. We have your work order ${woNum} and would like to schedule your appointment. Do you have a moment to pick a date?`;
+
+          try {
+            const vapiRes = await fetch("https://api.vapi.ai/call", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${vapiKeys.apiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                assistantId: vapiKeys.assistantId,
+                customer: { number: toPhone, name: customer.customer_name },
+                phoneNumberId: vapiKeys.phoneNumberId || undefined,
+                assistantOverrides: {
+                  firstMessage: vapiFirstMessage,
+                  metadata: {
+                    customer_name: customer.customer_name,
+                    address,
+                    work_order_number: woNum,
+                    appliance_type: appliance,
+                    status: new_status,
+                    job_type: wo.job_type,
+                    outbound: true,
+                    trigger: "status_change_immediate",
+                  },
+                },
+              }),
+            });
+
+            const vapiData = await vapiRes.json();
+            vapiResult = { success: vapiRes.ok, call_id: vapiData.id };
+
+            await sb.from("sms_logs").insert({
+              tenant_id,
+              recipient_phone: toPhone,
+              message_type: `status_${new_status}_vapi`,
+              status: vapiRes.ok ? "sent" : "failed",
+              twilio_message_id: vapiData.id || null,
+              error_message: vapiRes.ok ? null : JSON.stringify(vapiData),
+            });
+          } catch (err) {
+            vapiResult = { success: false, error: (err as Error).message };
+          }
+        }
+
+        // Bump outreach_count so the cron respects the 2-hour gap.
+        // The DB trigger will stamp first_outreach_date / last_outreach_date.
+        await sb
+          .from("work_orders")
+          .update({ outreach_count: (wo.outreach_count || 0) + 1 })
+          .eq("id", work_order_id);
+      }
+    }
+
+    // ── Sync status to AHS if this is an AHS dispatch ──
+    try {
+      const { data: woAhs } = await sb
+        .from("work_orders")
+        .select("ahs_dispatch_id")
+        .eq("id", work_order_id)
+        .single();
+
+      if (woAhs?.ahs_dispatch_id) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
+        await fetch(`${appUrl}/api/ahs/status-update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ work_order_id, tenant_id, new_status }),
+        });
+      }
+    } catch {}
+
     return NextResponse.json({
       success: twilioRes.ok,
       message_sid: twilioData.sid,
       to: toPhone,
       status_transition: `${old_status} → ${new_status}`,
       sms_preview: smsBody.substring(0, 80) + "...",
+      vapi: vapiResult,
     });
   } catch (error) {
     console.error("Status change notification error:", error);
