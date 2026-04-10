@@ -42,27 +42,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ skipped: true, reason: "No customer phone" });
     }
 
-    // Fetch Twilio credentials
+    // Fetch Twilio credentials (optional — if missing, SMS is skipped but
+    // the Vapi call below still fires independently).
     const { data: integration } = await sb
       .from("tenant_integrations")
       .select("encrypted_keys")
       .eq("tenant_id", tenant_id)
       .eq("integration_type", "twilio")
       .eq("is_configured", true)
-      .single();
+      .maybeSingle();
 
-    if (!integration) {
-      return NextResponse.json({ skipped: true, reason: "No Twilio configured" });
-    }
+    const creds = (integration?.encrypted_keys as any) || {};
+    const accountSid = creds.accountSid || "";
+    const authToken = creds.authToken || "";
+    const fromPhone = creds.phoneNumber || "";
+    const twilioReady = !!(accountSid && authToken && fromPhone);
 
-    const creds = integration.encrypted_keys as any;
-    const accountSid = creds.accountSid;
-    const authToken = creds.authToken;
-    const fromPhone = creds.phoneNumber;
-
-    if (!accountSid || !authToken || !fromPhone) {
-      return NextResponse.json({ error: "Incomplete Twilio credentials" }, { status: 500 });
-    }
+    // Format customer phone once — used by both SMS and Vapi
+    const phoneDigits = customer.phone.replace(/\D/g, "");
+    const toPhone = phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
 
     // Build SMS message based on status
     const firstName = customer.customer_name?.split(" ")[0] || "there";
@@ -117,41 +115,42 @@ export async function POST(request: NextRequest) {
 
     }
 
-    if (!smsBody) {
-      return NextResponse.json({ skipped: true, reason: `No SMS template for status: ${new_status}` });
+    // Send SMS via Twilio (only if Twilio is configured and we have a template)
+    let smsResult: any = null;
+    if (smsBody && twilioReady) {
+      const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+      const basicAuth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+
+      const twilioRes = await fetch(twilioUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          From: fromPhone,
+          To: toPhone,
+          Body: smsBody,
+        }),
+      });
+
+      const twilioData = await twilioRes.json();
+      smsResult = { success: twilioRes.ok, message_sid: twilioData.sid };
+
+      // Log the SMS
+      await sb.from("sms_logs").insert({
+        tenant_id,
+        recipient_phone: toPhone,
+        message_type: `status_${new_status}`,
+        status: twilioRes.ok ? "sent" : "failed",
+        twilio_message_id: twilioData.sid || null,
+        error_message: twilioRes.ok ? null : JSON.stringify(twilioData),
+      });
+    } else if (smsBody && !twilioReady) {
+      smsResult = { skipped: true, reason: "Twilio not configured" };
+    } else if (!smsBody) {
+      smsResult = { skipped: true, reason: `No SMS template for status: ${new_status}` };
     }
-
-    // Send via Twilio
-    const phoneDigits = customer.phone.replace(/\D/g, "");
-    const toPhone = phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
-
-    const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
-    const basicAuth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
-
-    const twilioRes = await fetch(twilioUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        From: fromPhone,
-        To: toPhone,
-        Body: smsBody,
-      }),
-    });
-
-    const twilioData = await twilioRes.json();
-
-    // Log the SMS
-    await sb.from("sms_logs").insert({
-      tenant_id,
-      recipient_phone: toPhone,
-      message_type: `status_${new_status}`,
-      status: twilioRes.ok ? "sent" : "failed",
-      twilio_message_id: twilioData.sid || null,
-      error_message: twilioRes.ok ? null : JSON.stringify(twilioData),
-    });
 
     // ── Immediate Vapi outbound call for New / Parts Have Arrived ──
     // Fires within 8am–8:30pm CT. Outside those hours, skip —
@@ -172,7 +171,7 @@ export async function POST(request: NextRequest) {
           .eq("tenant_id", tenant_id)
           .eq("integration_type", "vapi")
           .eq("is_configured", true)
-          .single();
+          .maybeSingle();
 
         const vapiKeys = (vapiInt?.encrypted_keys as any) || {};
         if (!vapiKeys.apiKey || !vapiKeys.assistantId) {
@@ -272,11 +271,11 @@ export async function POST(request: NextRequest) {
     } catch {}
 
     return NextResponse.json({
-      success: twilioRes.ok,
-      message_sid: twilioData.sid,
+      success: !!(smsResult?.success || vapiResult?.success),
       to: toPhone,
       status_transition: `${old_status} → ${new_status}`,
-      sms_preview: smsBody.substring(0, 80) + "...",
+      sms: smsResult,
+      sms_preview: smsBody ? smsBody.substring(0, 80) + "..." : null,
       vapi: vapiResult,
     });
   } catch (error) {
