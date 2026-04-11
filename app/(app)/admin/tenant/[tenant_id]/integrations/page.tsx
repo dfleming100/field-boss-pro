@@ -396,30 +396,37 @@ export default function TenantIntegrationPage() {
             <p className="text-sm text-gray-500 mb-4">AI voice agent for inbound calls — handles scheduling, customer lookup, and booking</p>
             <div className="space-y-4">
               <SecretField
-                label="Vapi API Key" value={vapi.apiKey}
+                label="Vapi Private API Key" value={vapi.apiKey}
                 onChange={(v) => setVapi({ ...vapi, apiKey: v })}
-                placeholder="Your Vapi API key" fieldKey="vapiKey"
-                helpText="Vapi Dashboard → Settings → API Keys"
+                placeholder="36-character UUID (e.g. cd179bda-568d-4642-b7f8-...)" fieldKey="vapiKey"
+                helpText="Vapi Dashboard → Settings → API Keys → PRIVATE Key (not Public). Must be a 36-character UUID."
               />
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number ID</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number UUID</label>
                 <input
                   type="text"
                   value={vapi.phoneNumberId}
                   onChange={(e) => setVapi({ ...vapi, phoneNumberId: e.target.value })}
-                  placeholder="Vapi phone number ID"
+                  placeholder="36-character UUID (e.g. b199e037-ca48-4af5-b5ae-...)"
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono"
                 />
+                <p className="mt-1 text-xs text-gray-500">
+                  Vapi Dashboard → Phone Numbers → click the number → copy the <strong>ID</strong> field.
+                  This is the UUID of the phone number, NOT the phone number itself.
+                </p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Assistant ID</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Assistant UUID</label>
                 <input
                   type="text"
                   value={vapi.assistantId}
                   onChange={(e) => setVapi({ ...vapi, assistantId: e.target.value })}
-                  placeholder="Vapi assistant ID"
+                  placeholder="36-character UUID (e.g. e7f33797-498a-4e8b-9333-...)"
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono"
                 />
+                <p className="mt-1 text-xs text-gray-500">
+                  Vapi Dashboard → Assistants → click the assistant → copy the <strong>ID</strong> field.
+                </p>
               </div>
             </div>
           </div>
