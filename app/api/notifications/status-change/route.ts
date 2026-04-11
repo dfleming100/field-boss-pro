@@ -42,6 +42,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ skipped: true, reason: "No customer phone" });
     }
 
+    // Fetch tenant branding — name and callback phone used in SMS and Vapi
+    const { data: tenantRow } = await sb
+      .from("tenants")
+      .select("name, contact_phone")
+      .eq("id", tenant_id)
+      .maybeSingle();
+    const tenantName = tenantRow?.name || "your service provider";
+    const tenantPhone = tenantRow?.contact_phone || "";
+    const callbackSuffix = tenantPhone ? ` or call ${tenantPhone}` : "";
+
     // Fetch Twilio credentials (optional — if missing, SMS is skipped but
     // the Vapi call below still fires independently).
     const { data: integration } = await sb
@@ -75,7 +85,7 @@ export async function POST(request: NextRequest) {
 
     switch (new_status) {
       case "New":
-        smsBody = `Hi ${firstName}, this is Fleming Appliance Repair. We are ready to schedule your ${appliance} service (WO #${woNum}). Reply or call (855) 269-3196 to book a time. - Fleming Appliance`;
+        smsBody = `Hi ${firstName}, this is ${tenantName}. We are ready to schedule your ${appliance} service (WO #${woNum}). Reply${callbackSuffix} to book a time. - ${tenantName}`;
         break;
 
       case "Scheduled": {
@@ -94,23 +104,23 @@ export async function POST(request: NextRequest) {
           const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
           const dateStr = `${months[d.getMonth()]} ${d.getDate()}`;
           const window = `${appt.start_time?.slice(0, 5) || "9:00"} - ${appt.end_time?.slice(0, 5) || "12:00"}`;
-          smsBody = `Hi ${firstName}, your ${appliance} ${jobLabel} at ${address} is confirmed for ${dateStr} between ${window}. See you then! - Fleming Appliance`;
+          smsBody = `Hi ${firstName}, your ${appliance} ${jobLabel} at ${address} is confirmed for ${dateStr} between ${window}. See you then! - ${tenantName}`;
         } else {
-          smsBody = `Hi ${firstName}, your ${appliance} ${jobLabel} at ${address} has been scheduled. We will send you the details shortly. - Fleming Appliance`;
+          smsBody = `Hi ${firstName}, your ${appliance} ${jobLabel} at ${address} has been scheduled. We will send you the details shortly. - ${tenantName}`;
         }
         break;
       }
 
       case "Complete":
-        smsBody = `Hi ${firstName}, your ${appliance} ${jobLabel} at ${address} is complete. Thank you for choosing Fleming Appliance! We will follow up shortly for your feedback.`;
+        smsBody = `Hi ${firstName}, your ${appliance} ${jobLabel} at ${address} is complete. Thank you for choosing ${tenantName}! We will follow up shortly for your feedback.`;
         break;
 
       case "Parts Have Arrived":
-        smsBody = `Hi ${firstName}, your ${appliance} parts have arrived (WO #${woNum}). Reply or call (855) 269-3196 to schedule your repair. - Fleming Appliance`;
+        smsBody = `Hi ${firstName}, your ${appliance} parts have arrived (WO #${woNum}). Reply${callbackSuffix} to schedule your repair. - ${tenantName}`;
         break;
 
       case "Parts Ordered":
-        smsBody = `Hi ${firstName}, parts for your ${appliance} have been ordered (WO #${woNum}). We will contact you when they arrive to schedule your repair. - Fleming Appliance`;
+        smsBody = `Hi ${firstName}, parts for your ${appliance} have been ordered (WO #${woNum}). We will contact you when they arrive to schedule your repair. - ${tenantName}`;
         break;
 
     }
@@ -183,8 +193,8 @@ export async function POST(request: NextRequest) {
           // intentionally omitted from speech — available in variables if
           // the assistant needs it for a tool call.
           const vapiFirstMessage = new_status === "Parts Have Arrived"
-            ? `Hi {{customer_name}}, this is Fleming Appliance Repair calling about your {{appliance_type}} repair at {{service_address}}. Your parts have arrived and we would like to schedule your repair follow-up appointment. Do you have a moment to pick a date?`
-            : `Hi {{customer_name}}, this is Fleming Appliance Repair calling about your {{appliance_type}} service at {{service_address}}. We would like to schedule your appointment. Do you have a moment to pick a date?`;
+            ? `Hi {{customer_name}}, this is {{tenant_name}} calling about your {{appliance_type}} repair at {{service_address}}. Your parts have arrived and we would like to schedule your repair follow-up appointment. Do you have a moment to pick a date?`
+            : `Hi {{customer_name}}, this is {{tenant_name}} calling about your {{appliance_type}} service at {{service_address}}. We would like to schedule your appointment. Do you have a moment to pick a date?`;
 
           try {
             const vapiRes = await fetch("https://api.vapi.ai/call", {
@@ -206,6 +216,7 @@ export async function POST(request: NextRequest) {
                   // outbound flag) lives in metadata instead since Liquid
                   // string truthiness can be misleading.
                   variableValues: {
+                    tenant_name: tenantName,
                     customer_name: customer.customer_name || "",
                     service_address: address || "",
                     work_order_number: woNum || "",
@@ -214,6 +225,7 @@ export async function POST(request: NextRequest) {
                     job_type: wo.job_type || "",
                   },
                   metadata: {
+                    tenant_name: tenantName,
                     customer_name: customer.customer_name,
                     service_address: address,
                     work_order_number: woNum,

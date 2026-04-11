@@ -83,19 +83,28 @@ export async function GET(request: NextRequest) {
 
       if ((count || 0) > 0) continue;
 
-      // Get Twilio creds
+      // Fetch tenant branding for SMS/Vapi copy
+      const { data: tenantRow } = await sb
+        .from("tenants")
+        .select("name, contact_phone")
+        .eq("id", wo.tenant_id)
+        .maybeSingle();
+      const tenantName = tenantRow?.name || "your service provider";
+      const tenantPhone = tenantRow?.contact_phone || "";
+      const callbackSuffix = tenantPhone ? ` or call ${tenantPhone}` : "";
+
+      // Get Twilio creds (optional — if missing, SMS is skipped but Vapi
+      // call below still fires independently)
       const { data: integration } = await sb
         .from("tenant_integrations")
         .select("encrypted_keys")
         .eq("tenant_id", wo.tenant_id)
         .eq("integration_type", "twilio")
         .eq("is_configured", true)
-        .single();
+        .maybeSingle();
 
-      if (!integration) continue;
-
-      const creds = integration.encrypted_keys as any;
-      if (!creds.accountSid || !creds.authToken || !creds.phoneNumber) continue;
+      const creds = (integration?.encrypted_keys as any) || {};
+      const twilioReady = !!(creds.accountSid && creds.authToken && creds.phoneNumber);
 
       const firstName = customer.customer_name?.split(" ")[0] || "there";
       const appliance = wo.appliance_type || "appliance";
@@ -103,33 +112,35 @@ export async function GET(request: NextRequest) {
       const address = [customer.service_address, customer.city, customer.state].filter(Boolean).join(", ");
       const phoneDigits = customer.phone.replace(/\D/g, "");
       const toPhone = phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
-      const basicAuth = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString("base64");
 
       const result: any = { wo_id: wo.id, wo_number: woNum, to: toPhone, sms: false, vapi: false };
 
-      // ── 1. Send SMS ──
-      let smsBody: string;
-      if (wo.status === "Parts Have Arrived") {
-        smsBody = `Hi ${firstName}, this is Fleming Appliance Repair. Your ${appliance} parts are in (WO #${woNum}). Reply or call (855) 269-3196 to schedule your repair.`;
-      } else if ((wo.outreach_count || 0) > 0) {
-        smsBody = `Hi ${firstName}, this is Fleming Appliance Repair following up on your ${appliance} service (WO #${woNum}). Call (855) 269-3196 or reply to schedule.`;
-      } else {
-        smsBody = `Hi ${firstName}, this is Fleming Appliance Repair. We are ready to schedule your ${appliance} service (WO #${woNum}). Call (855) 269-3196 or reply.`;
-      }
-
-      const smsRes = await fetch(
-        `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Messages.json`,
-        {
-          method: "POST",
-          headers: { Authorization: `Basic ${basicAuth}`, "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ From: creds.phoneNumber, To: toPhone, Body: smsBody }),
+      // ── 1. Send SMS (if Twilio is configured) ──
+      if (twilioReady) {
+        let smsBody: string;
+        if (wo.status === "Parts Have Arrived") {
+          smsBody = `Hi ${firstName}, this is ${tenantName}. Your ${appliance} parts are in (WO #${woNum}). Reply${callbackSuffix} to schedule your repair.`;
+        } else if ((wo.outreach_count || 0) > 0) {
+          smsBody = `Hi ${firstName}, this is ${tenantName} following up on your ${appliance} service (WO #${woNum}). Reply${callbackSuffix} to schedule.`;
+        } else {
+          smsBody = `Hi ${firstName}, this is ${tenantName}. We are ready to schedule your ${appliance} service (WO #${woNum}). Reply${callbackSuffix}.`;
         }
-      );
-      result.sms = smsRes.ok;
 
-      // Store SMS in conversation history
-      await sb.from("sms_conversations").insert({ tenant_id: wo.tenant_id, phone: toPhone, direction: "outbound", body: smsBody });
-      await sb.from("sms_logs").insert({ tenant_id: wo.tenant_id, recipient_phone: toPhone, message_type: "daily_outreach", status: smsRes.ok ? "sent" : "failed" });
+        const basicAuth = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString("base64");
+        const smsRes = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Messages.json`,
+          {
+            method: "POST",
+            headers: { Authorization: `Basic ${basicAuth}`, "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ From: creds.phoneNumber, To: toPhone, Body: smsBody }),
+          }
+        );
+        result.sms = smsRes.ok;
+
+        // Store SMS in conversation history
+        await sb.from("sms_conversations").insert({ tenant_id: wo.tenant_id, phone: toPhone, direction: "outbound", body: smsBody });
+        await sb.from("sms_logs").insert({ tenant_id: wo.tenant_id, recipient_phone: toPhone, message_type: "daily_outreach", status: smsRes.ok ? "sent" : "failed" });
+      }
 
       // ── 2. Make Vapi Call ──
       if (hasVapi) {
@@ -137,8 +148,8 @@ export async function GET(request: NextRequest) {
           // firstMessage uses Liquid template variables so Claude reads
           // values straight from variableValues instead of paraphrasing.
           const vapiFirstMessage = wo.status === "Parts Have Arrived"
-            ? `Hi {{customer_name}}, this is Fleming Appliance Repair calling about your {{appliance_type}} repair at {{service_address}}. Your parts have arrived and we would like to schedule your repair follow-up appointment. Do you have a moment to pick a date?`
-            : `Hi {{customer_name}}, this is Fleming Appliance Repair calling about your {{appliance_type}} service at {{service_address}}. We would like to schedule your appointment. Do you have a moment to pick a date?`;
+            ? `Hi {{customer_name}}, this is {{tenant_name}} calling about your {{appliance_type}} repair at {{service_address}}. Your parts have arrived and we would like to schedule your repair follow-up appointment. Do you have a moment to pick a date?`
+            : `Hi {{customer_name}}, this is {{tenant_name}} calling about your {{appliance_type}} service at {{service_address}}. We would like to schedule your appointment. Do you have a moment to pick a date?`;
 
           const vapiRes = await fetch("https://api.vapi.ai/call", {
             method: "POST",
@@ -159,6 +170,7 @@ export async function GET(request: NextRequest) {
                 // flag) lives in metadata since Liquid string truthiness
                 // can be misleading.
                 variableValues: {
+                  tenant_name: tenantName,
                   customer_name: customer.customer_name || "",
                   service_address: address || "",
                   work_order_number: woNum || "",
@@ -167,6 +179,7 @@ export async function GET(request: NextRequest) {
                   job_type: wo.job_type || "",
                 },
                 metadata: {
+                  tenant_name: tenantName,
                   customer_name: customer.customer_name,
                   service_address: address,
                   work_order_number: woNum,
