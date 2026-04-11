@@ -14,6 +14,20 @@ import { supabaseAdmin } from "@/lib/supabase";
  * - Each attempt = 1 SMS + 1 Vapi call
  * - Runs 7 days a week
  */
+
+// Format a phone stored as raw digits or mixed into (xxx) xxx-xxxx for
+// customer-facing SMS. Leaves non-10-digit values untouched.
+function formatPhoneForDisplay(raw: string): string {
+  const digits = (raw || "").replace(/\D/g, "");
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  }
+  return raw;
+}
+
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
@@ -90,7 +104,7 @@ export async function GET(request: NextRequest) {
         .eq("id", wo.tenant_id)
         .maybeSingle();
       const tenantName = tenantRow?.name || "your service provider";
-      const tenantPhone = tenantRow?.contact_phone || "";
+      const tenantPhone = formatPhoneForDisplay(tenantRow?.contact_phone || "");
       const callbackSuffix = tenantPhone ? ` or call ${tenantPhone}` : "";
 
       // Get Twilio creds (optional — if missing, SMS is skipped but Vapi
