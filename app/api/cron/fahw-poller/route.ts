@@ -76,6 +76,24 @@ export async function GET(request: NextRequest) {
             if (eventType === "Work Order Assigned") {
               const result = await handleNewAssignment(sb, creds, tenantId, woId);
               tenantResults.push({ event: eventType, woId, ...result });
+
+              // ONLY trigger outreach for genuinely new FAHW dispatches
+              // (from the events endpoint), NEVER for historical backfills.
+              if (result.status === "created" && result.work_order_id && result.fb_status === "New") {
+                try {
+                  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
+                  await fetch(`${appUrl}/api/notifications/status-change`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      work_order_id: result.work_order_id,
+                      tenant_id: tenantId,
+                      old_status: null,
+                      new_status: "New",
+                    }),
+                  });
+                } catch {}
+              }
             } else if (eventType === "Status Change") {
               const result = await handleStatusChange(sb, creds, tenantId, woId, event);
               tenantResults.push({ event: eventType, woId, ...result });
@@ -290,23 +308,6 @@ async function handleNewAssignment(
   try {
     await acknowledgeWorkOrder(creds, tenantId, fahwWorkOrderId);
   } catch {}
-
-  // Trigger the immediate outreach (SMS + Vapi) if status is New
-  if (fbStatus === "New") {
-    try {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
-      await fetch(`${appUrl}/api/notifications/status-change`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          work_order_id: wo.id,
-          tenant_id: tenantId,
-          old_status: null,
-          new_status: "New",
-        }),
-      });
-    } catch {}
-  }
 
   return {
     status: "created",
