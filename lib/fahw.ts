@@ -114,23 +114,42 @@ export function declineWorkOrder(creds: FAHWCredentials, tenantId: number, workO
 
 // ── Status Updates ──
 
-/** Provide status update on a work order */
+/** Provide status update on a work order.
+ * Note: ServiceFeeCollected is a BOOLEAN (true/false), not a dollar amount.
+ * WorkOrderItemId is required for completion.
+ * ServiceArrivalDate format: YYYY-MM-DD
+ * PartsEta format: YYYY-MM-DD */
 export function provideStatus(creds: FAHWCredentials, tenantId: number, payload: {
   workOrderId: number;
+  workOrderItemId?: number;
   serviceArrivalDate?: string;
   delayReason?: string;
-  serviceFeeCollected?: number;
+  serviceFeeCollected?: boolean;
   completionOutcome?: string;
   nonCompletionReason?: string;
   partsEta?: string;
-  cancelledReason?: string;
+  cancellationReason?: string;
 }) {
-  return fahwFetch(creds, tenantId, "PUT", "/v1/contractor/workorders/provide-status", payload);
+  // FAHW uses PascalCase field names
+  return fahwFetch(creds, tenantId, "PUT", "/v1/contractor/workorders/provide-status", {
+    WorkOrderId: payload.workOrderId,
+    WorkOrderItemId: payload.workOrderItemId || undefined,
+    ServiceArrivalDate: payload.serviceArrivalDate || undefined,
+    DelayReason: payload.delayReason || undefined,
+    ServiceFeeCollected: payload.serviceFeeCollected ?? undefined,
+    CompletionOutcome: payload.completionOutcome || undefined,
+    NonCompletionReason: payload.nonCompletionReason || undefined,
+    PartsEta: payload.partsEta || undefined,
+    CancellationReason: payload.cancellationReason || undefined,
+  });
 }
 
-/** Mark as on my way */
-export function onMyWay(creds: FAHWCredentials, tenantId: number, workOrderId: number) {
-  return fahwFetch(creds, tenantId, "PUT", "/v1/contractor/workorders/on-my-way", { workOrderId });
+/** Mark as on my way — requires WorkOrderItemIds array */
+export function onMyWay(creds: FAHWCredentials, tenantId: number, workOrderId: number, workOrderItemIds: number[]) {
+  return fahwFetch(creds, tenantId, "PUT", "/v1/contractor/workorders/on-my-way", {
+    WorkOrderId: workOrderId,
+    WorkOrderItemIds: workOrderItemIds,
+  });
 }
 
 /** Mark as unable to reach customer */
