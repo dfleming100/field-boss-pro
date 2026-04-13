@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
 
             result = await scheduleAppointment(creds, tenant_id, {
               workOrderId: fahwWorkOrderId,
-              appointmentDate: new Date(appt.appointment_date + "T12:00:00Z").toISOString(),
+              appointmentDate: appt.appointment_date,
               startTime: fmtTime(appt.start_time),
               endTime: fmtTime(appt.end_time),
             });
@@ -114,9 +114,13 @@ export async function POST(request: NextRequest) {
       }
 
       case "Parts Ordered": {
+        // FAHW requires a partsEta when nonCompletionReason is "I Ordered parts".
+        // Use the provided ETA or default to 7 days from now.
+        const defaultEta = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString().split("T")[0];
         result = await provideStatus(creds, tenant_id, {
           workOrderId: fahwWorkOrderId,
           nonCompletionReason: "I Ordered parts",
+          partsEta: body.parts_eta || defaultEta,
         });
         break;
       }
