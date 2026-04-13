@@ -456,7 +456,7 @@ async function catchMissedAssignments(
     if (!notes?.Result || !Array.isArray(notes.Result)) return;
 
     // Get unique WO IDs from notes
-    const woIds = [...new Set(notes.Result.map((n: any) => n.workOrderId).filter(Boolean))];
+    const woIds: number[] = [...new Set(notes.Result.map((n: any) => n.workOrderId).filter(Boolean))] as number[];
 
     // Check which ones we already have
     const { data: existingLinks } = await sb
