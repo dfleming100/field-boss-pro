@@ -238,6 +238,24 @@ export async function POST(request: NextRequest) {
       });
     } catch {}
 
+    // Push appointment to warranty provider if this is a warranty WO
+    try {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
+      await fetch(`${appUrl}/api/fahw/status-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          work_order_id: wo.id,
+          tenant_id: tenantId,
+          new_status: "Scheduled",
+          old_status: wo.status,
+          appointment_date: chosenDate,
+          start_time: startTime,
+          end_time: endTime,
+        }),
+      });
+    } catch {}
+
     // Format response
     const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
     const d = new Date(chosenDate + "T12:00:00");

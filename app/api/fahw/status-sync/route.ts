@@ -92,12 +92,14 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
 
           if (appt) {
-            // Convert 24h time (09:00) to FAHW format (9 AM)
+            // Convert 24h time (09:00) to FAHW format (9:00 AM)
             const fmtTime = (t: string) => {
-              const [h] = t.split(":");
+              const [h, m] = t.split(":");
               const hour = parseInt(h);
-              if (hour === 0 || hour === 12) return `12 ${hour === 0 ? "AM" : "PM"}`;
-              return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
+              const min = m || "00";
+              if (hour === 0) return `12:${min} AM`;
+              if (hour === 12) return `12:${min} PM`;
+              return hour > 12 ? `${hour - 12}:${min} PM` : `${hour}:${min} AM`;
             };
 
             result = await scheduleAppointment(creds, tenant_id, {
