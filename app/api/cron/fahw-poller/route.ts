@@ -108,9 +108,10 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        // 2. Also do a full work order list pull to catch any WOs that
-        // may have been assigned without an event (edge case on first run)
-        await catchMissedAssignments(sb, creds, tenantId, tenantResults);
+        // NOTE: We intentionally do NOT run catchMissedAssignments here.
+        // The notes endpoint returns a mix of WO IDs and PO numbers that
+        // are unreliable for discovering real dispatches. We rely solely
+        // on the events endpoint for new work order assignments.
 
       } catch (tenantErr) {
         tenantResults.push({ error: (tenantErr as Error).message });
@@ -252,8 +253,8 @@ async function handleNewAssignment(
   const doNotCollect = (woDetail.svcFeeStatus || "").toLowerCase().includes("satisfied") ||
     (woDetail.svcFeeStatus || "").toLowerCase().includes("waived");
 
-  // Create work order
-  const woNumber = `WO-${fahwWorkOrderId.toString().slice(-6)}`;
+  // Use the actual FAHW work order number — plain numeric, no prefix
+  const woNumber = (woDetail.workOrderNumber || fahwWorkOrderId).toString();
   const { data: wo, error: woErr } = await sb
     .from("work_orders")
     .insert({
