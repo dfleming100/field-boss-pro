@@ -278,21 +278,35 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── Sync status to AHS if this is an AHS dispatch ──
+    // ── Sync status back to warranty provider (provider-agnostic) ──
+    // Looks up warranty_links for this WO and dispatches to the right
+    // provider's status-sync endpoint. Supports AHS, FAHW, and any
+    // future providers without adding new conditionals here.
     try {
-      const { data: woAhs } = await sb
-        .from("work_orders")
-        .select("ahs_dispatch_id")
-        .eq("id", work_order_id)
-        .single();
+      const { data: warrantyLink } = await sb
+        .from("warranty_links")
+        .select("id, provider, external_id")
+        .eq("work_order_id", work_order_id)
+        .maybeSingle();
 
-      if (woAhs?.ahs_dispatch_id) {
+      if (warrantyLink) {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
-        await fetch(`${appUrl}/api/ahs/status-update`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ work_order_id, tenant_id, new_status }),
-        });
+        const syncPayload = { work_order_id, tenant_id, new_status, old_status };
+
+        if (warrantyLink.provider === "AHS") {
+          await fetch(`${appUrl}/api/ahs/status-update`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(syncPayload),
+          });
+        } else if (warrantyLink.provider === "FAHW") {
+          await fetch(`${appUrl}/api/fahw/status-sync`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(syncPayload),
+          });
+        }
+        // Future providers: add an else-if here
       }
     } catch {}
 

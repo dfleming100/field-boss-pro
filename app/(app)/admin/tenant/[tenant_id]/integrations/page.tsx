@@ -43,6 +43,13 @@ const emptyTwilio: TwilioConfig = { accountSid: "", authToken: "", phoneNumber: 
 const emptyVapi: VapiConfig = { apiKey: "", phoneNumberId: "", assistantId: "" };
 const emptyAnthropic: AnthropicConfig = { apiKey: "" };
 
+interface FAHWConfig {
+  username: string;
+  password: string;
+  apiUrl: string;
+}
+const emptyFahw: FAHWConfig = { username: "", password: "", apiUrl: "https://webdirectbat.fahw.com" };
+
 interface StripeConfig {
   connectAccountId: string;
   publishableKey: string;
@@ -67,6 +74,7 @@ export default function TenantIntegrationPage() {
   const [twilio, setTwilio] = useState<TwilioConfig>(emptyTwilio);
   const [vapi, setVapi] = useState<VapiConfig>(emptyVapi);
   const [anthropic, setAnthropic] = useState<AnthropicConfig>(emptyAnthropic);
+  const [fahw, setFahw] = useState<FAHWConfig>(emptyFahw);
   const [stripeConfig, setStripeConfig] = useState<StripeConfig>(emptyStripe);
 
   // Show/hide secrets
@@ -117,6 +125,13 @@ export default function TenantIntegrationPage() {
             break;
           case "anthropic":
             setAnthropic({ apiKey: keys.apiKey || "" });
+            break;
+          case "fahw":
+            setFahw({
+              username: keys.username || "",
+              password: keys.password || "",
+              apiUrl: keys.apiUrl || "https://webdirectbat.fahw.com",
+            });
             break;
           case "stripe":
             setStripeConfig({
@@ -231,6 +246,7 @@ export default function TenantIntegrationPage() {
     { id: "twilio", label: "Twilio", icon: Phone, configured: !!twilio.accountSid },
     { id: "vapi", label: "Vapi", icon: Mic, configured: !!vapi.apiKey },
     { id: "anthropic", label: "AI (Claude)", icon: Bot, configured: !!anthropic.apiKey },
+    { id: "fahw", label: "FAHW", icon: DollarSign, configured: !!fahw.username },
     { id: "stripe", label: "Stripe", icon: CreditCard, configured: !!stripeConfig.connectAccountId },
     { id: "webhooks", label: "Webhooks", icon: Megaphone, configured: true },
   ];
@@ -492,6 +508,58 @@ export default function TenantIntegrationPage() {
           >
             <Save size={16} />
             {isSaving ? "Saving..." : "Save AI Configuration"}
+          </button>
+        </div>
+      )}
+
+      {/* ── FAHW Tab ── */}
+      {activeTab === "fahw" && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">First American Home Warranty</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Direct API integration for receiving and managing FAHW work orders.
+              Swagger docs: <a href="https://webdirectbat.fahw.com/swagger/index.html" target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">webdirectbat.fahw.com</a>
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">API Username</label>
+                <input
+                  type="text"
+                  value={fahw.username}
+                  onChange={(e) => setFahw({ ...fahw, username: e.target.value })}
+                  placeholder="12686802@api-direct.com"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono"
+                />
+                <p className="mt-1 text-xs text-gray-500">Provided by your FAHW Business Systems Analyst (e.g. Sergio Estrada)</p>
+              </div>
+              <SecretField
+                label="API Password" value={fahw.password}
+                onChange={(v) => setFahw({ ...fahw, password: v })}
+                placeholder="Your FAHW API password" fieldKey="fahwPassword"
+                helpText="Provided alongside the API username by FAHW"
+              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">API Base URL</label>
+                <select
+                  value={fahw.apiUrl}
+                  onChange={(e) => setFahw({ ...fahw, apiUrl: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                >
+                  <option value="https://webdirectbat.fahw.com">Sandbox (webdirectbat.fahw.com)</option>
+                  <option value="https://webdirect.fahw.com">Production (webdirect.fahw.com)</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">Use Sandbox for testing, Production when live</p>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => saveIntegration("fahw", fahw as any)}
+            disabled={isSaving}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+          >
+            <Save size={16} />
+            {isSaving ? "Saving..." : "Save FAHW Configuration"}
           </button>
         </div>
       )}
