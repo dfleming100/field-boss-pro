@@ -5,6 +5,8 @@ import {
   scheduleAppointment,
   onMyWay,
   createNote,
+  partsEta as pushPartsEta,
+  getWorkOrder,
   type FAHWCredentials,
 } from "@/lib/fahw";
 
@@ -114,22 +116,30 @@ export async function POST(request: NextRequest) {
       }
 
       case "Parts Ordered": {
-        // FAHW requires a partsEta when nonCompletionReason is "I Ordered parts".
-        // Use the provided ETA or default to 7 days from now.
+        // Use the dedicated parts-eta endpoint per Sergio's guidance.
+        // Do NOT use provide-status for this — it causes cross-contamination.
         const defaultEta = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString().split("T")[0];
-        result = await provideStatus(creds, tenant_id, {
-          workOrderId: fahwWorkOrderId,
-          nonCompletionReason: "I Ordered parts",
-          partsEta: body.parts_eta || defaultEta,
-        });
+        result = await pushPartsEta(creds, tenant_id, fahwWorkOrderId, body.parts_eta || defaultEta);
         break;
       }
 
       case "Complete": {
+        // Fetch WO detail from FAHW to get the WorkOrderItemId (required)
+        const woDetail = await getWorkOrder(creds, tenant_id, fahwWorkOrderId);
+        const primaryItemId = woDetail?.workOrderItemDetails?.[0]?.workOrderItemId;
+
+        // provide-status for completion requires:
+        // - WorkOrderId, WorkOrderItemId
+        // - ServiceArrivalDate (YYYY-MM-DD), DelayReason
+        // - ServiceFeeCollected (boolean), CompletionOutcome
+        const today = new Date().toISOString().split("T")[0];
         result = await provideStatus(creds, tenant_id, {
           workOrderId: fahwWorkOrderId,
+          workOrderItemId: primaryItemId || undefined,
+          serviceArrivalDate: body.service_arrival_date || today,
+          delayReason: body.delay_reason || "No delay",
+          serviceFeeCollected: true,
           completionOutcome: "Completed",
-          serviceFeeCollected: service_fee_collected ?? 0,
         });
         break;
       }
