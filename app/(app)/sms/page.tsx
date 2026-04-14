@@ -83,20 +83,26 @@ export default function SMSCommandCenter() {
       }
     }
 
-    // Look up customer names
+    // Look up customer names in a single batch query instead of N+1
     const phones = Object.keys(phoneMap);
-    for (const phone of phones) {
-      const digits = phone.replace(/\D/g, "");
-      const search = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
-      if (search.length >= 7) {
-        const { data: customers } = await supabase
-          .from("customers")
-          .select("id, customer_name")
-          .or(`phone.ilike.%${search.slice(-7)}%`)
-          .limit(1);
-        if (customers?.[0]) {
-          phoneMap[phone].customer_name = customers[0].customer_name;
-          phoneMap[phone].customer_id = customers[0].id;
+    const { data: allCustomers } = await supabase
+      .from("customers")
+      .select("id, customer_name, phone")
+      .eq("tenant_id", tenantUser.tenant_id);
+
+    if (allCustomers) {
+      for (const phone of phones) {
+        const digits = phone.replace(/\D/g, "");
+        const search = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+        if (search.length >= 7) {
+          const match = allCustomers.find((c: any) => {
+            const cDigits = (c.phone || "").replace(/\D/g, "");
+            return cDigits.includes(search.slice(-7)) || search.includes(cDigits.slice(-7));
+          });
+          if (match) {
+            phoneMap[phone].customer_name = match.customer_name;
+            phoneMap[phone].customer_id = match.id;
+          }
         }
       }
     }
