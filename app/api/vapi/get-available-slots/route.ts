@@ -135,9 +135,15 @@ export async function POST(request: NextRequest) {
       // Repair follow-up: same tech
       techsToCheck = [assignedTechId];
     } else if (applianceType && skillRows && skillRows.length > 0) {
-      // Find techs with skills matching this appliance, sorted by priority
+      // Find techs with skills matching this appliance, sorted by priority.
+      // Use contains match so "Cooktop: Electric" matches the "Cooktop" skill,
+      // "Dryer: Gas" matches "Dryer", etc.
+      const appLower = applianceType.toLowerCase();
       const matching = skillRows
-        .filter((s) => s.appliance_type === applianceType)
+        .filter((s) => {
+          const skillLower = (s.appliance_type || "").toLowerCase();
+          return appLower === skillLower || appLower.startsWith(skillLower);
+        })
         .sort((a, b) => a.priority - b.priority);
 
       if (matching.length > 0) {
