@@ -235,33 +235,31 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Send SMS notification
-    try {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
-      await fetch(`${appUrl}/api/notifications/status-change`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ work_order_id: wo.id, tenant_id: tenantId, old_status: wo.status, new_status: "Scheduled" }),
-      });
-    } catch {}
+    // Fire SMS notification and warranty sync WITHOUT blocking the response.
+    // These are fire-and-forget — the booking is already saved in the DB,
+    // so the customer gets a confirmed response from Vapi immediately.
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
 
-    // Push appointment to warranty provider if this is a warranty WO
-    try {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
-      await fetch(`${appUrl}/api/fahw/status-sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          work_order_id: wo.id,
-          tenant_id: tenantId,
-          new_status: "Scheduled",
-          old_status: wo.status,
-          appointment_date: chosenDate,
-          start_time: startTime,
-          end_time: endTime,
-        }),
-      });
-    } catch {}
+    // Don't await — fire and forget
+    fetch(`${appUrl}/api/notifications/status-change`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ work_order_id: wo.id, tenant_id: tenantId, old_status: wo.status, new_status: "Scheduled" }),
+    }).catch(() => {});
+
+    fetch(`${appUrl}/api/fahw/status-sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        work_order_id: wo.id,
+        tenant_id: tenantId,
+        new_status: "Scheduled",
+        old_status: wo.status,
+        appointment_date: chosenDate,
+        start_time: startTime,
+        end_time: endTime,
+      }),
+    }).catch(() => {});
 
     // Format response
     const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
