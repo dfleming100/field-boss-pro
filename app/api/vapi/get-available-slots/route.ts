@@ -136,13 +136,19 @@ export async function POST(request: NextRequest) {
       techsToCheck = [assignedTechId];
     } else if (applianceType && skillRows && skillRows.length > 0) {
       // Find techs with skills matching this appliance, sorted by priority.
-      // Use contains match so "Cooktop: Electric" matches the "Cooktop" skill,
-      // "Dryer: Gas" matches "Dryer", etc.
+      // Use keyword match so any of these formats work:
+      //   "Cooktop: Electric" matches "Cooktop"
+      //   "Electric Cooktop" matches "Cooktop"
+      //   "Gas Dryer" matches "Dryer"
+      //   "Dryer: Gas" matches "Dryer"
+      //   "Built In Microwave" matches "Microwave"
       const appLower = applianceType.toLowerCase();
       const matching = skillRows
         .filter((s) => {
           const skillLower = (s.appliance_type || "").toLowerCase();
-          return appLower === skillLower || appLower.startsWith(skillLower);
+          return appLower === skillLower
+            || appLower.includes(skillLower)
+            || skillLower.includes(appLower);
         })
         .sort((a, b) => a.priority - b.priority);
 
