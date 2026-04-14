@@ -117,7 +117,14 @@ export async function POST(request: NextRequest) {
           const d = new Date(appt.appointment_date + "T12:00:00");
           const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
           const dateStr = `${months[d.getMonth()]} ${d.getDate()}`;
-          const window = `${appt.start_time?.slice(0, 5) || "9:00"} - ${appt.end_time?.slice(0, 5) || "12:00"}`;
+          const to12h = (t: string) => {
+            const [h, m] = (t || "9:00").split(":");
+            const hour = parseInt(h);
+            if (hour === 0) return `12:${m} AM`;
+            if (hour === 12) return `12:${m} PM`;
+            return hour > 12 ? `${hour - 12}:${m} PM` : `${hour}:${m} AM`;
+          };
+          const window = `${to12h(appt.start_time)} - ${to12h(appt.end_time)}`;
           smsBody = `Hi ${firstName}, your ${appliance} ${jobLabel} at ${address} is confirmed for ${dateStr} between ${window}. See you then! - ${tenantName}`;
         } else {
           smsBody = `Hi ${firstName}, your ${appliance} ${jobLabel} at ${address} has been scheduled. We will send you the details shortly. - ${tenantName}`;
