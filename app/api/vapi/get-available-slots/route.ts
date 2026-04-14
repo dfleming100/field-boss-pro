@@ -23,7 +23,16 @@ export async function POST(request: NextRequest) {
       toolCallId = tc.id || "";
     }
 
-    const workOrderNumber = (args.work_order_number || args.workOrderNumber || "").trim();
+    // Try to get WO number from tool args first. If blank, fall back to
+    // Vapi call metadata/variableValues (the assistant may omit the arg
+    // on outbound calls where the WO number was prefilled).
+    let workOrderNumber = (args.work_order_number || args.workOrderNumber || "").trim();
+    if (!workOrderNumber) {
+      const meta = raw.message?.call?.assistantOverrides?.metadata
+        || raw.message?.call?.metadata || {};
+      const vars = raw.message?.call?.assistantOverrides?.variableValues || {};
+      workOrderNumber = (meta.work_order_number || vars.work_order_number || "").trim();
+    }
     const sb = supabaseAdmin();
 
     // Build lookup candidates — the LLM may pass "1005", "WO-1005", or even "wo 1005".

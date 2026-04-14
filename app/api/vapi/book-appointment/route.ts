@@ -30,7 +30,14 @@ export async function POST(request: NextRequest) {
       toolCallId = tc.id || "";
     }
 
-    const workOrderNumber = (args.work_order_number || args.workOrderNumber || "").trim();
+    // Fall back to Vapi call metadata if the assistant passes a blank WO number
+    let workOrderNumber = (args.work_order_number || args.workOrderNumber || "").trim();
+    if (!workOrderNumber) {
+      const meta = raw.message?.call?.assistantOverrides?.metadata
+        || raw.message?.call?.metadata || {};
+      const vars = raw.message?.call?.assistantOverrides?.variableValues || {};
+      workOrderNumber = (meta.work_order_number || vars.work_order_number || "").trim();
+    }
     const chosenDate = (args.chosen_date || args.chosenDate || "").trim();
     const techIdArg = (args.tech_id || args.techId || "").trim();
 
