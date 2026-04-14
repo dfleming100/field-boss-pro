@@ -128,18 +128,16 @@ export async function POST(request: NextRequest) {
         const woDetail = await getWorkOrder(creds, tenant_id, fahwWorkOrderId);
         const primaryItemId = woDetail?.workOrderItemDetails?.[0]?.workOrderItemId;
 
-        // provide-status for completion requires:
-        // - WorkOrderId, WorkOrderItemId
-        // - ServiceArrivalDate (YYYY-MM-DD), DelayReason
-        // - ServiceFeeCollected (boolean), CompletionOutcome
+        // CompletionOutcome must be one of: Repair, Replace,
+        // Repair with Non-Covered, Replace with Non-Covered,
+        // Possible Denial, No Mechanical Failure
         const today = new Date().toISOString().split("T")[0];
         result = await provideStatus(creds, tenant_id, {
           workOrderId: fahwWorkOrderId,
           workOrderItemId: primaryItemId || undefined,
           serviceArrivalDate: body.service_arrival_date || today,
-          delayReason: body.delay_reason || "No delay",
           serviceFeeCollected: true,
-          completionOutcome: "Completed",
+          completionOutcome: body.completion_outcome || "Repair",
         });
         break;
       }
