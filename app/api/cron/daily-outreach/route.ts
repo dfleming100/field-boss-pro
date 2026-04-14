@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
     const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
     const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
 
-    // Fetch eligible work orders
+    // Fetch eligible work orders from ALL tenants
     const { data: workOrders } = await sb
       .from("work_orders")
       .select(`
@@ -58,19 +58,24 @@ export async function GET(request: NextRequest) {
       `)
       .in("status", ["New", "Parts Have Arrived"])
       .order("created_at", { ascending: true })
-      .limit(20);
+      .limit(50);
 
-    // Get Vapi credentials (once, for the tenant)
-    const { data: vapiInt } = await sb
-      .from("tenant_integrations")
-      .select("encrypted_keys")
-      .eq("integration_type", "vapi")
-      .eq("is_configured", true)
-      .limit(1)
-      .single();
+    // Cache Vapi credentials PER TENANT so each tenant uses their own assistant
+    const vapiCache: Record<number, { apiKey: string; assistantId: string; phoneNumberId?: string } | null> = {};
 
-    const vapiKeys = (vapiInt?.encrypted_keys as any) || {};
-    const hasVapi = !!(vapiKeys.apiKey && vapiKeys.assistantId);
+    const getVapiForTenant = async (tenantId: number) => {
+      if (vapiCache[tenantId] !== undefined) return vapiCache[tenantId];
+      const { data: vapiInt } = await sb
+        .from("tenant_integrations")
+        .select("encrypted_keys")
+        .eq("tenant_id", tenantId)
+        .eq("integration_type", "vapi")
+        .eq("is_configured", true)
+        .maybeSingle();
+      const keys = (vapiInt?.encrypted_keys as any) || {};
+      vapiCache[tenantId] = (keys.apiKey && keys.assistantId) ? keys : null;
+      return vapiCache[tenantId];
+    };
 
     const results: any[] = [];
 
@@ -156,11 +161,10 @@ export async function GET(request: NextRequest) {
         await sb.from("sms_logs").insert({ tenant_id: wo.tenant_id, recipient_phone: toPhone, message_type: "daily_outreach", status: smsRes.ok ? "sent" : "failed" });
       }
 
-      // ── 2. Make Vapi Call ──
-      if (hasVapi) {
+      // ── 2. Make Vapi Call (using THIS tenant's Vapi credentials) ──
+      const vapiKeys = await getVapiForTenant(wo.tenant_id);
+      if (vapiKeys) {
         try {
-          // firstMessage uses Liquid template variables so Claude reads
-          // values straight from variableValues instead of paraphrasing.
           const vapiFirstMessage = wo.status === "Parts Have Arrived"
             ? `Hi {{customer_name}}, this is {{tenant_name}} calling about your {{appliance_type}} repair at {{service_address}}. Your parts have arrived and we would like to schedule your repair follow-up appointment. Do you have a moment to pick a date?`
             : `Hi {{customer_name}}, this is {{tenant_name}} calling about your {{appliance_type}} service at {{service_address}}. We would like to schedule your appointment. Do you have a moment to pick a date?`;
@@ -177,12 +181,6 @@ export async function GET(request: NextRequest) {
               phoneNumberId: vapiKeys.phoneNumberId || undefined,
               assistantOverrides: {
                 firstMessage: vapiFirstMessage,
-                // First-class Liquid template variables — referenced in
-                // firstMessage and the assistant's system prompt as
-                // {{customer_name}}, {{service_address}}, etc. The LLM
-                // treats them as hard facts. Boolean branching (outbound
-                // flag) lives in metadata since Liquid string truthiness
-                // can be misleading.
                 variableValues: {
                   tenant_name: tenantName,
                   customer_name: customer.customer_name || "",
@@ -226,7 +224,7 @@ export async function GET(request: NextRequest) {
       results.push(result);
     }
 
-    return NextResponse.json({ success: true, outreach_sent: results.length, has_vapi: hasVapi, results });
+    return NextResponse.json({ success: true, outreach_sent: results.length, results });
   } catch (error) {
     console.error("Daily outreach error:", error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
