@@ -251,13 +251,18 @@ export function createInvoice(creds: FAHWCredentials, tenantId: number, payload:
 export function mapFahwStatusToFieldBoss(lastAction: string, subStatus?: string): string {
   const action = (lastAction || "").toLowerCase();
   if (action.includes("completed") || action.includes("job completed")) return "Complete";
+  if (action.includes("invoice")) return "Complete";
   if (action.includes("appointment") || action.includes("scheduled")) return "Scheduled";
   if (action.includes("parts") && action.includes("order")) return "Parts Ordered";
   if (action.includes("parts") && (action.includes("arrived") || action.includes("received"))) return "Parts Have Arrived";
   if (action.includes("en route") || action.includes("on my way")) return "Scheduled";
-  if (action.includes("cancel")) return "New";
+  // Cancelled WOs should NOT be "New" — they'd trigger outreach.
+  // Map to Complete so the cron ignores them.
+  if (action.includes("cancel")) return "Complete";
+  // Only genuinely new assignments get "New" status
   if (action.includes("assigned") || action.includes("dispatched")) return "New";
-  return "New";
+  // Unknown statuses default to Complete (safe) rather than New (triggers outreach)
+  return "Complete";
 }
 
 /** Map Field Boss status to a FAHW provide-status payload shape */
