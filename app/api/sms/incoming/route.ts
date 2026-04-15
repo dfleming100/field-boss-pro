@@ -387,7 +387,8 @@ If Status is "Parts Ordered":
 If Status is "New":
 - For greetings: Say "Hi [name], we have your [appliance] service at [address]. Would you like to schedule?" Action: "info"
 - For date mentions: Convert and return action "book".
-- For "schedule" or "when": Offer first 3 available dates. Action: "info"
+- For "schedule", "when", or ANY affirmative reply ("ok", "yes", "sure", "let's schedule", "yes let's schedule"): Offer the first 3 available dates from the Available Dates list with the time window. Say "We have openings on [date1], [date2], and [date3] between [window]. Which day works best for you?" Action: "info"
+- CRITICAL: The WO is NEW — the customer does NOT have an appointment yet. NEVER say "you already have an appointment" or "appointment scheduled" when status is New. There is no appointment to confirm.
 
 If Status is "Complete":
 - Say "Hi [name], your [appliance] service is complete. How can I help you?" Action: "info"
