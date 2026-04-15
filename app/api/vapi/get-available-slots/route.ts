@@ -7,8 +7,14 @@ import { supabaseAdmin } from "@/lib/supabase";
  * Reads ZIP windows, tech skills, and capacity from database (per-tenant).
  */
 
+// Get date string in Central Time (handles CDT/CST automatically)
 function dateStr(d: Date): string {
-  return d.toISOString().split("T")[0];
+  return d.toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+}
+
+// Get "today" in Central Time
+function todayCT(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 }
 
 export async function POST(request: NextRequest) {
@@ -176,7 +182,7 @@ export async function POST(request: NextRequest) {
       .from("tech_daily_capacity")
       .select("*")
       .eq("tenant_id", tenantId)
-      .gte("date", dateStr(new Date()));
+      .gte("date", todayCT());
 
     const capMap: Record<string, { total: number; repairs: number }> = {};
     for (const row of capacityRows || []) {
@@ -191,13 +197,13 @@ export async function POST(request: NextRequest) {
       .from("days_off")
       .select("technician_id, date_off")
       .eq("tenant_id", tenantId)
-      .gte("date_off", dateStr(new Date()));
+      .gte("date_off", todayCT());
 
     const { data: holidays } = await sb
       .from("tenant_holidays")
       .select("holiday_date")
       .eq("tenant_id", tenantId)
-      .gte("holiday_date", dateStr(new Date()));
+      .gte("holiday_date", todayCT());
 
     const daysOffSet = new Set<string>();
     const companyDaysOff = new Set<string>();
@@ -210,10 +216,11 @@ export async function POST(request: NextRequest) {
     }
     const holidaySet = new Set((holidays || []).map((h: any) => h.holiday_date));
 
-    // ── Scan next 20 business days ──
+    // ── Scan next 20 business days (starting from tomorrow in CT) ──
     const available: { date: string; tech_name: string; tech_id: number }[] = [];
-    const today = new Date();
-    let d = new Date(today);
+    const todayStr = todayCT();
+    // Start scanning from tomorrow CT
+    let d = new Date(todayStr + "T12:00:00");
     let bizDays = 0;
 
     while (bizDays < 20) {

@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
     // ── Validation ──
     const chosenDateObj = new Date(chosenDate + "T12:00:00");
     const dow = chosenDateObj.getDay();
-    const today = new Date().toISOString().split("T")[0];
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 
     if (dow === 0 || dow === 6) {
       return wrapResponse(toolCallId, { success: false, error: "weekend", message: "We do not schedule on weekends. Please choose a weekday." });
