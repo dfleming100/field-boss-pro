@@ -136,7 +136,9 @@ export async function POST(request: NextRequest) {
           workOrderId: fahwWorkOrderId,
           workOrderItemId: primaryItemId || undefined,
           serviceArrivalDate: body.service_arrival_date || today,
-          serviceFeeCollected: true,
+          // FA always collects the service fee upfront from the customer.
+          // Only pass true if the contractor collected it themselves.
+          serviceFeeCollected: false,
           completionOutcome: body.completion_outcome || "Repair",
         });
         break;
