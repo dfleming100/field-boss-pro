@@ -46,14 +46,15 @@ export default function SMSCommandCenter() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [readPhones, setReadPhones] = useState<Set<string>>(() => {
+  // Track last-read timestamp per phone so only NEW inbound messages show as unread
+  const [readTimestamps, setReadTimestamps] = useState<Record<string, string>>(() => {
     if (typeof window !== "undefined") {
       try {
-        const saved = localStorage.getItem("sms_read_phones");
-        return saved ? new Set(JSON.parse(saved)) : new Set();
-      } catch { return new Set(); }
+        const saved = localStorage.getItem("sms_read_timestamps");
+        return saved ? JSON.parse(saved) : {};
+      } catch { return {}; }
     }
-    return new Set();
+    return {};
   });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
@@ -86,7 +87,9 @@ export default function SMSCommandCenter() {
           direction: msg.direction,
         };
       }
-      if (msg.direction === "inbound" && !readPhones.has(msg.phone)) {
+      // Only count inbound messages NEWER than when we last read this conversation
+      const lastRead = readTimestamps[msg.phone];
+      if (msg.direction === "inbound" && (!lastRead || msg.created_at > lastRead)) {
         phoneMap[msg.phone].unread_count++;
       }
     }
@@ -122,7 +125,7 @@ export default function SMSCommandCenter() {
 
     setConversations(sorted);
     setIsLoading(false);
-  }, [tenantUser, readPhones]);
+  }, [tenantUser, readTimestamps]);
 
   // Fetch messages for selected conversation
   const fetchMessages = useCallback(async (phone: string) => {
@@ -161,9 +164,9 @@ export default function SMSCommandCenter() {
   const selectConversation = (conv: Conversation) => {
     setSelectedPhone(conv.phone);
     setSelectedCustomer(conv.customer_name);
-    setReadPhones((prev) => {
-      const next = new Set([...prev, conv.phone]);
-      try { localStorage.setItem("sms_read_phones", JSON.stringify([...next])); } catch {}
+    setReadTimestamps((prev) => {
+      const next = { ...prev, [conv.phone]: new Date().toISOString() };
+      try { localStorage.setItem("sms_read_timestamps", JSON.stringify(next)); } catch {}
       return next;
     });
     fetchMessages(conv.phone);
