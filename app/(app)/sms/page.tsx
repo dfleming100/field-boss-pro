@@ -46,7 +46,15 @@ export default function SMSCommandCenter() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [readPhones, setReadPhones] = useState<Set<string>>(new Set());
+  const [readPhones, setReadPhones] = useState<Set<string>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("sms_read_phones");
+        return saved ? new Set(JSON.parse(saved)) : new Set();
+      } catch { return new Set(); }
+    }
+    return new Set();
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -153,7 +161,11 @@ export default function SMSCommandCenter() {
   const selectConversation = (conv: Conversation) => {
     setSelectedPhone(conv.phone);
     setSelectedCustomer(conv.customer_name);
-    setReadPhones((prev) => new Set([...prev, conv.phone]));
+    setReadPhones((prev) => {
+      const next = new Set([...prev, conv.phone]);
+      try { localStorage.setItem("sms_read_phones", JSON.stringify([...next])); } catch {}
+      return next;
+    });
     fetchMessages(conv.phone);
   };
 
