@@ -22,6 +22,54 @@ function formatPhoneForDisplay(raw: string): string {
   return raw;
 }
 
+// Expand street and state abbreviations for TTS so the voice assistant
+// reads "Drive" instead of "Doctor", "Texas" instead of "TX", etc.
+function expandAddressForTTS(s: string): string {
+  return s
+    // Street suffixes (handle with and without periods)
+    .replace(/\bDr\.?\b/gi, "Drive")
+    .replace(/\bSt\.?\b/gi, "Street")
+    .replace(/\bBlvd\.?\b/gi, "Boulevard")
+    .replace(/\bAve\.?\b/gi, "Avenue")
+    .replace(/\bLn\.?\b/gi, "Lane")
+    .replace(/\bRd\.?\b/gi, "Road")
+    .replace(/\bCt\.?\b/gi, "Court")
+    .replace(/\bCir\.?\b/gi, "Circle")
+    .replace(/\bPl\.?\b/gi, "Place")
+    .replace(/\bPkwy\.?\b/gi, "Parkway")
+    .replace(/\bTrl\.?\b/gi, "Trail")
+    .replace(/\bHwy\.?\b/gi, "Highway")
+    .replace(/\bWay\b/gi, "Way")
+    // Directionals
+    .replace(/\bN\.?\b/g, "North")
+    .replace(/\bS\.?\b/g, "South")
+    .replace(/\bE\.?\b/g, "East")
+    .replace(/\bW\.?\b/g, "West")
+    // State abbreviations
+    .replace(/\bTX\b/g, "Texas")
+    .replace(/\bCA\b/g, "California")
+    .replace(/\bFL\b/g, "Florida")
+    .replace(/\bNY\b/g, "New York")
+    .replace(/\bOK\b/g, "Oklahoma")
+    .replace(/\bAR\b/g, "Arkansas")
+    .replace(/\bLA\b/g, "Louisiana")
+    .replace(/\bNM\b/g, "New Mexico")
+    .replace(/\bCO\b/g, "Colorado")
+    .replace(/\bAZ\b/g, "Arizona")
+    .replace(/\bGA\b/g, "Georgia")
+    .replace(/\bNC\b/g, "North Carolina")
+    .replace(/\bSC\b/g, "South Carolina")
+    .replace(/\bTN\b/g, "Tennessee")
+    .replace(/\bAL\b/g, "Alabama")
+    .replace(/\bMS\b/g, "Mississippi")
+    .replace(/\bVA\b/g, "Virginia")
+    .replace(/\bOH\b/g, "Ohio")
+    .replace(/\bPA\b/g, "Pennsylvania")
+    .replace(/\bIL\b/g, "Illinois")
+    .replace(/\bMO\b/g, "Missouri")
+    .replace(/\bKS\b/g, "Kansas");
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { work_order_id, tenant_id, old_status, new_status } = await request.json();
@@ -93,13 +141,7 @@ export async function POST(request: NextRequest) {
       .filter(Boolean)
       .join(", ");
     // Expand abbreviations for TTS — prevents "Dr" being read as "Doctor" etc.
-    const address = rawAddress
-      .replace(/\bDr\b/gi, "Drive").replace(/\bSt\b/gi, "Street")
-      .replace(/\bBlvd\b/gi, "Boulevard").replace(/\bAve\b/gi, "Avenue")
-      .replace(/\bLn\b/gi, "Lane").replace(/\bRd\b/gi, "Road")
-      .replace(/\bCt\b/gi, "Court").replace(/\bCir\b/gi, "Circle")
-      .replace(/\bPl\b/gi, "Place").replace(/\bPkwy\b/gi, "Parkway")
-      .replace(/\bTrl\b/gi, "Trail");
+    const address = expandAddressForTTS(rawAddress);
     const woNum = wo.work_order_number || "";
     const jobLabel = wo.job_type === "Repair Follow-up" ? "repair follow-up" : "service";
 

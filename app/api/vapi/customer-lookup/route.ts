@@ -39,13 +39,28 @@ function getSearchTokens(addr: string): string[] {
 // Expand address for TTS (voice reads "Dr" as "Doctor")
 function expandAddress(s: string): string {
   return s
-    .replace(/\bDr\b/gi, "Drive").replace(/\bSt\b/gi, "Street")
-    .replace(/\bBlvd\b/gi, "Boulevard").replace(/\bAve\b/gi, "Avenue")
-    .replace(/\bLn\b/gi, "Lane").replace(/\bRd\b/gi, "Road")
-    .replace(/\bCt\b/gi, "Court").replace(/\bCir\b/gi, "Circle")
-    .replace(/\bPl\b/gi, "Place").replace(/\bPkwy\b/gi, "Parkway")
-    .replace(/\bTrl\b/gi, "Trail").replace(/\bN\b/g, "North")
-    .replace(/\bS\b/g, "South").replace(/\bE\b/g, "East").replace(/\bW\b/g, "West");
+    // Street suffixes (with and without periods)
+    .replace(/\bDr\.?\b/gi, "Drive").replace(/\bSt\.?\b/gi, "Street")
+    .replace(/\bBlvd\.?\b/gi, "Boulevard").replace(/\bAve\.?\b/gi, "Avenue")
+    .replace(/\bLn\.?\b/gi, "Lane").replace(/\bRd\.?\b/gi, "Road")
+    .replace(/\bCt\.?\b/gi, "Court").replace(/\bCir\.?\b/gi, "Circle")
+    .replace(/\bPl\.?\b/gi, "Place").replace(/\bPkwy\.?\b/gi, "Parkway")
+    .replace(/\bTrl\.?\b/gi, "Trail").replace(/\bHwy\.?\b/gi, "Highway")
+    // Directionals
+    .replace(/\bN\.?\b/g, "North").replace(/\bS\.?\b/g, "South")
+    .replace(/\bE\.?\b/g, "East").replace(/\bW\.?\b/g, "West")
+    // State abbreviations
+    .replace(/\bTX\b/g, "Texas").replace(/\bCA\b/g, "California")
+    .replace(/\bFL\b/g, "Florida").replace(/\bNY\b/g, "New York")
+    .replace(/\bOK\b/g, "Oklahoma").replace(/\bAR\b/g, "Arkansas")
+    .replace(/\bLA\b/g, "Louisiana").replace(/\bNM\b/g, "New Mexico")
+    .replace(/\bCO\b/g, "Colorado").replace(/\bAZ\b/g, "Arizona")
+    .replace(/\bGA\b/g, "Georgia").replace(/\bNC\b/g, "North Carolina")
+    .replace(/\bSC\b/g, "South Carolina").replace(/\bTN\b/g, "Tennessee")
+    .replace(/\bAL\b/g, "Alabama").replace(/\bMS\b/g, "Mississippi")
+    .replace(/\bVA\b/g, "Virginia").replace(/\bOH\b/g, "Ohio")
+    .replace(/\bPA\b/g, "Pennsylvania").replace(/\bIL\b/g, "Illinois")
+    .replace(/\bMO\b/g, "Missouri").replace(/\bKS\b/g, "Kansas");
 }
 
 const STATUS_PRIORITY = ["Parts Have Arrived", "Parts Ordered", "New", "Scheduled"];
