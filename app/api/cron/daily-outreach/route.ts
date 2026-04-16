@@ -128,7 +128,15 @@ export async function GET(request: NextRequest) {
       const firstName = customer.customer_name?.split(" ")[0] || "there";
       const appliance = wo.appliance_type || "appliance";
       const woNum = wo.work_order_number || "";
-      const address = [customer.service_address, customer.city, customer.state].filter(Boolean).join(", ");
+      const rawAddress = [customer.service_address, customer.city, customer.state].filter(Boolean).join(", ");
+      // Expand abbreviations for TTS — prevents "Dr" being read as "Doctor" etc.
+      const address = rawAddress
+        .replace(/\bDr\b/gi, "Drive").replace(/\bSt\b/gi, "Street")
+        .replace(/\bBlvd\b/gi, "Boulevard").replace(/\bAve\b/gi, "Avenue")
+        .replace(/\bLn\b/gi, "Lane").replace(/\bRd\b/gi, "Road")
+        .replace(/\bCt\b/gi, "Court").replace(/\bCir\b/gi, "Circle")
+        .replace(/\bPl\b/gi, "Place").replace(/\bPkwy\b/gi, "Parkway")
+        .replace(/\bTrl\b/gi, "Trail");
       const phoneDigits = customer.phone.replace(/\D/g, "");
       const toPhone = phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
 
