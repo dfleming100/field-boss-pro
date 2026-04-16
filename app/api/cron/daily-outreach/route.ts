@@ -3,16 +3,19 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 /**
  * GET /api/cron/daily-outreach
- * Runs twice daily — sends SMS AND makes Vapi call for each eligible WO.
+ * Runs 6 times daily — sends SMS AND makes Vapi call for each eligible WO.
+ *
+ * Schedule (CT): 8am, 11am, 2pm, 4pm, 6pm, 8pm
  *
  * Rules:
  * - WOs with status "New" or "Parts Have Arrived"
  * - 5 day max from first outreach, then stops
- * - 2 hour gap between attempts
+ * - No gap between attempts — every cron window fires
  * - Skip if WO already has a scheduled appointment
  * - No contact before 8am or after 8:30pm CT
  * - Each attempt = 1 SMS + 1 Vapi call
  * - Runs 7 days a week
+ * - Plus immediate fire on status change (separate handler)
  */
 
 // Format a phone stored as raw digits or mixed into (xxx) xxx-xxxx for
@@ -88,7 +91,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ skipped: true, reason: "Outside business hours (8am-8:30pm CT)" });
     }
 
-    const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
     const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
 
     // Fetch eligible work orders from ALL tenants
@@ -128,11 +130,6 @@ export async function GET(request: NextRequest) {
 
       // Stop after 5 days from first outreach
       if (wo.first_outreach_date && new Date(wo.first_outreach_date) < new Date(fiveDaysAgo)) {
-        continue;
-      }
-
-      // Skip if last outreach was less than 2 hours ago
-      if (wo.last_outreach_date && new Date(wo.last_outreach_date) > new Date(twoHoursAgo)) {
         continue;
       }
 
