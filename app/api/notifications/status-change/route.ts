@@ -168,6 +168,14 @@ export async function POST(request: NextRequest) {
       const twilioData = await twilioRes.json();
       smsResult = { success: twilioRes.ok, message_sid: twilioData.sid };
 
+      // Store in conversation history so it shows in the SMS center
+      await sb.from("sms_conversations").insert({
+        tenant_id,
+        phone: toPhone,
+        direction: "outbound",
+        body: smsBody,
+      });
+
       // Log the SMS
       await sb.from("sms_logs").insert({
         tenant_id,
