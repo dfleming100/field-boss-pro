@@ -150,7 +150,6 @@ export async function GET(request: NextRequest) {
         .maybeSingle();
       const tenantName = tenantRow?.name || "your service provider";
       const tenantPhone = formatPhoneForDisplay(tenantRow?.contact_phone || "");
-      const callbackSuffix = tenantPhone ? ` or call ${tenantPhone}` : "";
 
       // Get Twilio creds (optional — if missing, SMS is skipped but Vapi
       // call below still fires independently)
@@ -164,6 +163,9 @@ export async function GET(request: NextRequest) {
 
       const creds = (integration?.encrypted_keys as any) || {};
       const twilioReady = !!(creds.accountSid && creds.authToken && creds.phoneNumber);
+      // Use Twilio number for customer-facing SMS, not the office contact phone
+      const twilioNum = formatPhoneForDisplay(creds.phoneNumber || "");
+      const callbackSuffix = twilioNum ? ` or call ${twilioNum}` : (tenantPhone ? ` or call ${tenantPhone}` : "");
 
       const firstName = customer.customer_name?.split(" ")[0] || "there";
       const appliance = wo.appliance_type || "appliance";

@@ -112,7 +112,6 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
     const tenantName = tenantRow?.name || "your service provider";
     const tenantPhone = formatPhoneForDisplay(tenantRow?.contact_phone || "");
-    const callbackSuffix = tenantPhone ? ` or call ${tenantPhone}` : "";
 
     // Fetch Twilio credentials (optional — if missing, SMS is skipped but
     // the Vapi call below still fires independently).
@@ -129,6 +128,9 @@ export async function POST(request: NextRequest) {
     const authToken = creds.authToken || "";
     const fromPhone = creds.phoneNumber || "";
     const twilioReady = !!(accountSid && authToken && fromPhone);
+    // Use Twilio number for customer-facing SMS, not the office contact phone
+    const twilioNum = formatPhoneForDisplay(fromPhone);
+    const callbackSuffix = twilioNum ? ` or call ${twilioNum}` : (tenantPhone ? ` or call ${tenantPhone}` : "");
 
     // Format customer phone once — used by both SMS and Vapi
     const phoneDigits = customer.phone.replace(/\D/g, "");
