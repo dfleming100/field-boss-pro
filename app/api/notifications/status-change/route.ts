@@ -241,11 +241,33 @@ export async function POST(request: NextRequest) {
       smsResult = { skipped: true, reason: `No SMS template for status: ${new_status}` };
     }
 
-    // Send email via Resend (same verbiage as SMS)
+    // Send email via Resend
     let emailResult: any = null;
     const customerEmail = customer?.email;
     const resendKey = process.env.RESEND_API_KEY || "";
     if (smsBody && customerEmail && resendKey) {
+      // Build email body based on status
+      let emailBody = "";
+      switch (new_status) {
+        case "New":
+          emailBody = `Hi ${firstName}, this is ${tenantName}. We are ready to schedule your ${appliance} service (WO #${woNum}). You can call or text ${tenantPhone || "us"} to book an appointment using our AI automated assistant.`;
+          break;
+        case "Parts Have Arrived":
+          emailBody = `Hi ${firstName}, this is ${tenantName}. Your ${appliance} parts have arrived (WO #${woNum}). You can call or text ${tenantPhone || "us"} to schedule your repair using our AI automated assistant.`;
+          break;
+        case "Scheduled":
+          emailBody = smsBody.replace(` - ${tenantName}`, "");
+          break;
+        case "Complete":
+          emailBody = smsBody;
+          break;
+        case "Parts Ordered":
+          emailBody = smsBody.replace(` - ${tenantName}`, "");
+          break;
+        default:
+          emailBody = smsBody.replace(` - ${tenantName}`, "");
+      }
+
       try {
         const emailRes = await fetch("https://api.resend.com/emails", {
           method: "POST",
@@ -260,9 +282,8 @@ export async function POST(request: NextRequest) {
             html: `
               <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
                 <h2 style="color: #1e293b;">${tenantName}</h2>
-                <p>${smsBody.replace(` - ${tenantName}`, "")}</p>
-                ${tenantPhone ? `<p>Call us: <a href="tel:${tenantPhone}">${tenantPhone}</a></p>` : ""}
-                <p style="color: #64748b; font-size: 12px; margin-top: 24px;">${tenantName}</p>
+                <p>${emailBody}</p>
+                <p style="color: #64748b; font-size: 12px; margin-top: 24px;">${tenantName}${tenantPhone ? ` | ${tenantPhone}` : ""}</p>
               </div>
             `,
           }),
