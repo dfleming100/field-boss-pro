@@ -241,6 +241,43 @@ export async function POST(request: NextRequest) {
       smsResult = { skipped: true, reason: `No SMS template for status: ${new_status}` };
     }
 
+    // Send email via Resend (same verbiage as SMS)
+    let emailResult: any = null;
+    const customerEmail = customer?.email;
+    const resendKey = process.env.RESEND_API_KEY || "";
+    if (smsBody && customerEmail && resendKey) {
+      try {
+        const emailRes = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${resendKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: `${tenantName} <noreply@fieldbosspro.com>`,
+            to: customerEmail,
+            subject: `${tenantName} — Your ${appliance} Service`,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
+                <h2 style="color: #1e293b;">${tenantName}</h2>
+                <p>${smsBody.replace(` - ${tenantName}`, "")}</p>
+                ${tenantPhone ? `<p>Call us: <a href="tel:${tenantPhone}">${tenantPhone}</a></p>` : ""}
+                <p style="color: #64748b; font-size: 12px; margin-top: 24px;">${tenantName}</p>
+              </div>
+            `,
+          }),
+        });
+        const emailData = await emailRes.json();
+        emailResult = { success: emailRes.ok, id: emailData.id };
+      } catch (err) {
+        emailResult = { success: false, error: (err as Error).message };
+      }
+    } else if (!customerEmail) {
+      emailResult = { skipped: true, reason: "No customer email" };
+    } else if (!resendKey) {
+      emailResult = { skipped: true, reason: "Resend not configured" };
+    }
+
     // ── Immediate Vapi outbound call for New / Parts Have Arrived ──
     // Fires within 8am–8:30pm CT. Outside those hours, skip —
     // the 8am and 9am/3pm crons on /api/cron/daily-outreach will catch it.
@@ -376,11 +413,12 @@ export async function POST(request: NextRequest) {
     } catch {}
 
     return NextResponse.json({
-      success: !!(smsResult?.success || vapiResult?.success),
+      success: !!(smsResult?.success || vapiResult?.success || emailResult?.success),
       to: toPhone,
       status_transition: `${old_status} → ${new_status}`,
       sms: smsResult,
       sms_preview: smsBody ? smsBody.substring(0, 80) + "..." : null,
+      email: emailResult,
       vapi: vapiResult,
     });
   } catch (error) {
