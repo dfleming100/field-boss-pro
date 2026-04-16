@@ -259,6 +259,44 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // ── 3. Send Email via Resend ──
+      const customerEmail = customer?.email;
+      const resendKey = process.env.RESEND_API_KEY || "";
+      const twilioPhone = formatPhoneForDisplay(creds.phoneNumber || "");
+      if (customerEmail && resendKey) {
+        let emailBody: string;
+        if (wo.status === "Parts Have Arrived") {
+          emailBody = `Hi ${firstName}, this is ${tenantName}. Your ${appliance} parts have arrived (WO #${woNum}). You can call or text ${twilioPhone || tenantPhone || "us"} to schedule your repair using our AI automated assistant.`;
+        } else {
+          emailBody = `Hi ${firstName}, this is ${tenantName}. We are ready to schedule your ${appliance} service (WO #${woNum}). You can call or text ${twilioPhone || tenantPhone || "us"} to book an appointment using our AI automated assistant.`;
+        }
+
+        try {
+          const emailRes = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${resendKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              from: `${tenantName} <noreply@fieldbosspro.com>`,
+              to: customerEmail,
+              subject: `${tenantName} — Your ${appliance} Service`,
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
+                  <h2 style="color: #1e293b;">${tenantName}</h2>
+                  <p>${emailBody}</p>
+                  <p style="color: #64748b; font-size: 12px; margin-top: 24px;">${tenantName}${twilioPhone ? ` | ${twilioPhone}` : ""}</p>
+                </div>
+              `,
+            }),
+          });
+          result.email = emailRes.ok;
+        } catch {
+          result.email = false;
+        }
+      }
+
       // Update outreach count
       await sb.from("work_orders").update({ outreach_count: (wo.outreach_count || 0) + 1 }).eq("id", wo.id);
 
