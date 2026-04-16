@@ -245,12 +245,14 @@ export async function POST(request: NextRequest) {
     let emailResult: any = null;
     const customerEmail = customer?.email;
     const resendKey = process.env.RESEND_API_KEY || "";
+    // Use the Twilio number for the email CTA — that's where the AI assistant answers
+    const twilioPhone = formatPhoneForDisplay(fromPhone || "");
     if (smsBody && customerEmail && resendKey) {
       // Build email body based on status
       let emailBody = "";
       switch (new_status) {
         case "New":
-          emailBody = `Hi ${firstName}, this is ${tenantName}. We are ready to schedule your ${appliance} service (WO #${woNum}). You can call or text ${tenantPhone || "us"} to book an appointment using our AI automated assistant.`;
+          emailBody = `Hi ${firstName}, this is ${tenantName}. We are ready to schedule your ${appliance} service (WO #${woNum}). You can call or text ${twilioPhone || tenantPhone || "us"} to book an appointment using our AI automated assistant.`;
           break;
         case "Parts Have Arrived":
           emailBody = `Hi ${firstName}, this is ${tenantName}. Your ${appliance} parts have arrived (WO #${woNum}). You can call or text ${tenantPhone || "us"} to schedule your repair using our AI automated assistant.`;
