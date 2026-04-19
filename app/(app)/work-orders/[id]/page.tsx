@@ -27,13 +27,14 @@ import {
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
   "New": { label: "New", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
+  "Parts Needed": { label: "Parts Needed", bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500" },
   "Parts Ordered": { label: "Parts Ordered", bg: "bg-amber-100", text: "text-amber-700", dot: "bg-amber-500" },
   "Parts Have Arrived": { label: "Parts Arrived", bg: "bg-teal-100", text: "text-teal-700", dot: "bg-teal-500" },
   "Scheduled": { label: "Scheduled", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500" },
   "Complete": { label: "Complete", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
 };
 
-const statusOptions = ["New", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
+const statusOptions = ["New", "Parts Needed", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
 
 interface ApplianceDetail {
   id: number | string;
@@ -304,12 +305,12 @@ export default function WorkOrderDetailPage() {
 
   const cancelAppointment = async (apptId: number, apptDate: string, techId: number | null) => {
     const newStatus = window.prompt(
-      "Cancel this appointment. What status should the work order change to?\n\nOptions: New, Parts Ordered, Parts Have Arrived, Complete\n\nType the status:",
+      "Cancel this appointment. What status should the work order change to?\n\nOptions: New, Parts Needed, Parts Ordered, Parts Have Arrived, Complete\n\nType the status:",
       "Parts Have Arrived"
     );
     if (!newStatus) return;
 
-    const validStatuses = ["New", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
+    const validStatuses = ["New", "Parts Needed", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
     if (!validStatuses.includes(newStatus)) {
       setError("Invalid status. Use: " + validStatuses.join(", "));
       return;

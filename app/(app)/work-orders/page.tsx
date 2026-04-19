@@ -38,6 +38,7 @@ interface WorkOrder {
 type StatusFilter =
   | "all"
   | "New"
+  | "Parts Needed"
   | "Parts Ordered"
   | "Parts Have Arrived"
   | "Scheduled"
@@ -48,6 +49,7 @@ const STATUS_CONFIG: Record<
   { label: string; bg: string; text: string; dot: string }
 > = {
   "New": { label: "New", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
+  "Parts Needed": { label: "Parts Needed", bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500" },
   "Parts Ordered": { label: "Parts Ordered", bg: "bg-amber-100", text: "text-amber-700", dot: "bg-amber-500" },
   "Parts Have Arrived": { label: "Parts Arrived", bg: "bg-teal-100", text: "text-teal-700", dot: "bg-teal-500" },
   "Scheduled": { label: "Scheduled", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500" },
@@ -132,7 +134,7 @@ function WorkOrdersContent() {
     ["New"].includes(wo.status)
   ).length;
   const openCount = workOrders.filter((wo) =>
-    ["Parts Ordered", "Parts Have Arrived", "Scheduled"].includes(wo.status)
+    ["Parts Needed", "Parts Ordered", "Parts Have Arrived", "Scheduled"].includes(wo.status)
   ).length;
   const closedCount = workOrders.filter((wo) =>
     ["Complete"].includes(wo.status)
@@ -337,6 +339,7 @@ function WorkOrdersContent() {
                 [
                   "all",
                   "New",
+                  "Parts Needed",
                   "Parts Ordered",
                   "Parts Have Arrived",
                   "Scheduled",
