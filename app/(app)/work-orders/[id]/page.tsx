@@ -99,7 +99,8 @@ export default function WorkOrderDetailPage() {
         .select(`
           *,
           customer:customers(*),
-          technician:technicians!assigned_technician_id(tech_name, phone, email)
+          technician:technicians!assigned_technician_id(tech_name, phone, email),
+          warranty_links(provider, external_number)
         `)
         .eq("id", workOrderId)
         .eq("tenant_id", tenantUser.tenant_id)
@@ -425,6 +426,19 @@ export default function WorkOrderDetailPage() {
               <h1 className="text-2xl font-bold text-gray-900">
                 {workOrder.work_order_number}
               </h1>
+              {workOrder.warranty_links?.[0]?.provider && (
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold tracking-wide ${
+                    workOrder.warranty_links[0].provider === "FAHW"
+                      ? "bg-orange-100 text-orange-700"
+                      : workOrder.warranty_links[0].provider === "AHS"
+                      ? "bg-sky-100 text-sky-700"
+                      : "bg-gray-100 text-gray-700"
+                  }`}
+                >
+                  {workOrder.warranty_links[0].provider}
+                </span>
+              )}
               <span
                 className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold ${statusCfg.bg} ${statusCfg.text}`}
               >

@@ -33,7 +33,13 @@ interface WorkOrder {
   phone?: string;
   email?: string;
   appointments?: Appointment[];
+  warranty_provider?: string | null;
 }
+
+const WARRANTY_BADGE: Record<string, { bg: string; text: string; label: string }> = {
+  FAHW: { bg: "bg-orange-100", text: "text-orange-700", label: "FAHW" },
+  AHS: { bg: "bg-sky-100", text: "text-sky-700", label: "AHS" },
+};
 
 type StatusFilter =
   | "all"
@@ -80,7 +86,8 @@ function WorkOrdersContent() {
           *,
           customer:customers(customer_name, service_address, city, state, zip, phone, email),
           technician:technicians!assigned_technician_id(tech_name),
-          appointments(appointment_date, start_time, end_time, status)
+          appointments(appointment_date, start_time, end_time, status),
+          warranty_links(provider)
         `
         )
         .eq("tenant_id", tenantUser.tenant_id)
@@ -99,6 +106,7 @@ function WorkOrdersContent() {
         phone: wo.customer?.phone,
         email: wo.customer?.email,
         appointments: wo.appointments || [],
+        warranty_provider: wo.warranty_links?.[0]?.provider || null,
       }));
 
       setWorkOrders(enriched);
@@ -460,13 +468,22 @@ function WorkOrdersContent() {
                       />
                     </td>
                     <td className="px-4 py-3">
-                      <Link
-                        href={`/work-orders/${wo.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-sm font-semibold text-indigo-600 hover:text-indigo-700"
-                      >
-                        {wo.work_order_number}
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/work-orders/${wo.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                        >
+                          {wo.work_order_number}
+                        </Link>
+                        {wo.warranty_provider && WARRANTY_BADGE[wo.warranty_provider] && (
+                          <span
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${WARRANTY_BADGE[wo.warranty_provider].bg} ${WARRANTY_BADGE[wo.warranty_provider].text}`}
+                          >
+                            {WARRANTY_BADGE[wo.warranty_provider].label}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-sm text-gray-900">
