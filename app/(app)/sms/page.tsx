@@ -14,6 +14,7 @@ import {
   Clock,
   ChevronLeft,
   Circle,
+  RefreshCw,
 } from "lucide-react";
 
 interface Conversation {
@@ -76,6 +77,10 @@ export default function SMSCommandCenter() {
     const unreadAfterRead: Record<string, number> = {};
 
     for (const msg of data) {
+      // Skip malformed phone values (e.g. "+", empty, or too short to be a real number)
+      const digits = (msg.phone || "").replace(/\D/g, "");
+      if (digits.length < 7) continue;
+
       if (!phoneMap[msg.phone]) {
         phoneMap[msg.phone] = {
           phone: msg.phone,
@@ -282,6 +287,13 @@ export default function SMSCommandCenter() {
             </span>
           )}
         </div>
+        <button
+          onClick={() => fetchConversations()}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition"
+        >
+          <RefreshCw size={14} />
+          Refresh
+        </button>
       </div>
 
       <div className="flex bg-white rounded-xl border border-gray-200 overflow-hidden h-[calc(100%-3rem)]">
