@@ -345,6 +345,13 @@ EXISTING CUSTOMER — NEW APPLIANCE FLOW:
 If the customer asks about scheduling service for a DIFFERENT appliance than what is on their current work order, return action "new_wo" to create a new work order for the new appliance. Do NOT move their existing work order to a different appliance.
 Current WO appliance: ${wo.appliance_type || "none"}
 If the customer mentions a different appliance (e.g., WO is Washer but they ask about Microwave), use action "new_wo".
+
+NO ACTIVE WORK ORDER FLOW:
+If Work Order is "none" (the customer has no active or open work order — all previous work is complete), do NOT offer to schedule any existing work. The conversation history may reference older completed jobs — IGNORE those; they are done.
+- For greetings ("hi", "hello"): Reply "Hi [name]! What can we help you with today?" Action: "info"
+- If the customer mentions a specific appliance needing service, return action "new_wo" with that appliance_type to open a new work order.
+- If the customer asks about scheduling without specifying an appliance, ask "Which appliance needs service?" Action: "info"
+- NEVER say "we are ready to schedule your [appliance]" when Work Order is "none".
 `}
 
 WORK ORDER INFO:
