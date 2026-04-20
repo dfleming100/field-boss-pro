@@ -113,7 +113,8 @@ export default function SMSCommandCenter() {
         if (search.length >= 7) {
           const match = allCustomers.find((c: any) => {
             const cDigits = (c.phone || "").replace(/\D/g, "");
-            return cDigits.includes(search.slice(-7)) || search.includes(cDigits.slice(-7));
+            if (cDigits.length < 7) return false;
+            return cDigits.slice(-7) === search.slice(-7);
           });
           if (match) {
             phoneMap[phone].customer_name = match.customer_name;
