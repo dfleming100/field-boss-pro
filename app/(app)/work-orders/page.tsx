@@ -106,7 +106,7 @@ function WorkOrdersContent() {
         phone: wo.customer?.phone,
         email: wo.customer?.email,
         appointments: wo.appointments || [],
-        warranty_provider: wo.warranty_links?.[0]?.provider || null,
+        warranty_provider: wo.warranty_links?.provider || null,
       }));
 
       setWorkOrders(enriched);

@@ -426,17 +426,17 @@ export default function WorkOrderDetailPage() {
               <h1 className="text-2xl font-bold text-gray-900">
                 {workOrder.work_order_number}
               </h1>
-              {workOrder.warranty_links?.[0]?.provider && (
+              {workOrder.warranty_links?.provider && (
                 <span
                   className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold tracking-wide ${
-                    workOrder.warranty_links[0].provider === "FAHW"
+                    workOrder.warranty_links.provider === "FAHW"
                       ? "bg-orange-100 text-orange-700"
-                      : workOrder.warranty_links[0].provider === "AHS"
+                      : workOrder.warranty_links.provider === "AHS"
                       ? "bg-sky-100 text-sky-700"
                       : "bg-gray-100 text-gray-700"
                   }`}
                 >
-                  {workOrder.warranty_links[0].provider}
+                  {workOrder.warranty_links.provider}
                 </span>
               )}
               <span
