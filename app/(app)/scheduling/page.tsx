@@ -92,6 +92,74 @@ function formatTime(t: string | null): string {
 
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 7); // 7am-6pm
 
+// Assign side-by-side "lanes" so overlapping appts in the same tech column
+// render beside each other instead of stacking on top.
+function assignLanes(appts: Appointment[]) {
+  const toMin = (t: string | null) => {
+    if (!t) return 0;
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + (m || 0);
+  };
+  const items = appts
+    .map((a) => ({
+      appt: a,
+      start: toMin(a.start_time),
+      end: a.end_time ? toMin(a.end_time) : toMin(a.start_time) + 120,
+      lane: -1,
+    }))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+
+  const laneEnd: number[] = [];
+  for (const it of items) {
+    let placed = false;
+    for (let l = 0; l < laneEnd.length; l++) {
+      if (laneEnd[l] <= it.start) {
+        it.lane = l;
+        laneEnd[l] = it.end;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      it.lane = laneEnd.length;
+      laneEnd.push(it.end);
+    }
+  }
+
+  // Find transitive overlap clusters so each appt knows how many lanes its
+  // cluster needs (width = 1 / clusterLanes).
+  const cluster: number[] = new Array(items.length).fill(-1);
+  let next = 0;
+  for (let i = 0; i < items.length; i++) {
+    if (cluster[i] !== -1) continue;
+    cluster[i] = next;
+    const q = [i];
+    while (q.length) {
+      const c = q.shift()!;
+      for (let j = 0; j < items.length; j++) {
+        if (cluster[j] !== -1) continue;
+        if (items[j].start < items[c].end && items[c].start < items[j].end) {
+          cluster[j] = next;
+          q.push(j);
+        }
+      }
+    }
+    next++;
+  }
+  const clusterLanes = new Array(next).fill(0);
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].lane + 1 > clusterLanes[cluster[i]]) {
+      clusterLanes[cluster[i]] = items[i].lane + 1;
+    }
+  }
+
+  return items.map((it, i) => ({
+    appt: it.appt,
+    lane: it.lane,
+    totalLanes: clusterLanes[cluster[i]],
+  }));
+}
+
 // ── Component ──────────────────────────────────────────
 function SchedulingContent() {
   const router = useRouter();
@@ -105,6 +173,7 @@ function SchedulingContent() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [pendingWOs, setPendingWOs] = useState<PendingWO[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedTechIds, setSelectedTechIds] = useState<Set<number> | null>(null);
 
   // Date range for fetching
   const dateRange = useMemo(() => {
@@ -154,7 +223,10 @@ function SchedulingContent() {
         .limit(20),
     ]);
 
-    if (techRes.data) setTechnicians(techRes.data);
+    if (techRes.data) {
+      setTechnicians(techRes.data);
+      setSelectedTechIds((prev) => prev ?? new Set(techRes.data.map((t: Technician) => t.id)));
+    }
     if (apptRes.data) {
       const enriched = apptRes.data.map((a: any) => ({
         ...a,
@@ -192,6 +264,33 @@ function SchedulingContent() {
     });
     return m;
   }, [technicians]);
+
+  const visibleTechnicians = useMemo(
+    () => (selectedTechIds ? technicians.filter((t) => selectedTechIds.has(t.id)) : technicians),
+    [technicians, selectedTechIds]
+  );
+
+  const visibleAppointments = useMemo(
+    () =>
+      selectedTechIds
+        ? appointments.filter(
+            (a) => a.technician_id === null || selectedTechIds.has(a.technician_id)
+          )
+        : appointments,
+    [appointments, selectedTechIds]
+  );
+
+  const toggleTech = (id: number) => {
+    setSelectedTechIds((prev) => {
+      const next = new Set(prev ?? technicians.map((t) => t.id));
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllTechs = () =>
+    setSelectedTechIds(new Set(technicians.map((t) => t.id)));
 
   // Navigation
   const navigate = (dir: number) => {
@@ -247,8 +346,10 @@ function SchedulingContent() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Scheduling</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {technicians.length} technician{technicians.length !== 1 ? "s" : ""} &middot;{" "}
-            {appointments.length} appointment{appointments.length !== 1 ? "s" : ""}
+            {visibleTechnicians.length} of {technicians.length} tech
+            {technicians.length !== 1 ? "s" : ""} &middot;{" "}
+            {visibleAppointments.length} appointment
+            {visibleAppointments.length !== 1 ? "s" : ""}
           </p>
         </div>
 
@@ -271,6 +372,43 @@ function SchedulingContent() {
           </div>
         </div>
       </div>
+
+      {/* Tech Filter */}
+      {technicians.length > 0 && (
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs:</span>
+          <button
+            onClick={selectAllTechs}
+            className={`px-3 py-1 text-xs font-medium rounded-full border transition ${
+              selectedTechIds && selectedTechIds.size === technicians.length
+                ? "bg-gray-900 text-white border-gray-900"
+                : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+            }`}
+          >
+            All
+          </button>
+          {technicians.map((tech) => {
+            const isOn = selectedTechIds?.has(tech.id) ?? true;
+            const color = techColorMap[tech.id];
+            return (
+              <button
+                key={tech.id}
+                onClick={() => toggleTech(tech.id)}
+                className={`px-3 py-1 text-xs font-medium rounded-full border flex items-center gap-1.5 transition ${
+                  isOn
+                    ? `${color.header} text-white border-transparent`
+                    : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${isOn ? "bg-white/90" : color.header}`}
+                />
+                {tech.tech_name}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Date Navigation */}
       <div className="flex items-center justify-between mb-4 bg-white rounded-xl border border-gray-200 px-4 py-3">
@@ -334,10 +472,14 @@ function SchedulingContent() {
       {/* ── DAY VIEW ── */}
       {viewMode === "day" && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          {technicians.length === 0 ? (
+          {visibleTechnicians.length === 0 ? (
             <div className="p-12 text-center">
               <CalendarDays size={48} className="text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">Add technicians to see the schedule.</p>
+              <p className="text-gray-500">
+                {technicians.length === 0
+                  ? "Add technicians to see the schedule."
+                  : "No techs selected — pick at least one above."}
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -345,7 +487,7 @@ function SchedulingContent() {
                 {/* Tech header columns */}
                 <div className="flex border-b border-gray-200">
                   <div className="w-20 flex-shrink-0 bg-gray-50 border-r border-gray-200" />
-                  {technicians.map((tech) => {
+                  {visibleTechnicians.map((tech) => {
                     const color = techColorMap[tech.id];
                     return (
                       <div
@@ -376,9 +518,10 @@ function SchedulingContent() {
                   </div>
 
                   {/* Tech columns with positioned appointments */}
-                  {technicians.map((tech) => {
+                  {visibleTechnicians.map((tech) => {
                     const color = techColorMap[tech.id];
                     const techAppts = getAppts(tech.id, dateStr(currentDate));
+                    const laneData = assignLanes(techAppts);
 
                     return (
                       <div
@@ -390,40 +533,49 @@ function SchedulingContent() {
                           <div key={hour} className="h-[60px] border-b border-gray-100" />
                         ))}
 
-                        {/* Appointment cards positioned absolutely */}
-                        {techAppts.map((appt) => {
+                        {/* Appointment cards — side-by-side lanes for overlaps */}
+                        {laneData.map(({ appt, lane, totalLanes }) => {
                           const startHour = getTimeSlot(appt.start_time);
                           const startMin = appt.start_time ? parseInt(appt.start_time.split(":")[1] || "0") : 0;
                           const endHour = appt.end_time ? parseInt(appt.end_time.split(":")[0] || "0") : startHour + 2;
                           const endMin = appt.end_time ? parseInt(appt.end_time.split(":")[1] || "0") : 0;
 
-                          const topOffset = ((startHour - HOURS[0]) * 60 + startMin);
-                          const duration = ((endHour - startHour) * 60 + (endMin - startMin));
-                          const topPx = topOffset;
-                          const heightPx = Math.max(duration, 30);
+                          const topPx = (startHour - HOURS[0]) * 60 + startMin;
+                          const heightPx = Math.max((endHour - startHour) * 60 + (endMin - startMin), 30);
+                          const widthPct = 100 / totalLanes;
+                          const leftPct = lane * widthPct;
+                          const isNarrow = totalLanes > 1;
 
                           return (
                             <button
                               key={appt.id}
                               onClick={() => router.push(`/work-orders/${appt.work_order_id}`)}
-                              className={`absolute left-1 right-1 ${color.bg} border ${color.border} rounded-lg p-2 hover:shadow-md transition overflow-hidden z-10`}
-                              style={{ top: `${topPx}px`, height: `${heightPx}px` }}
+                              className={`absolute ${color.bg} border ${color.border} rounded-lg p-1.5 hover:shadow-md hover:z-20 transition overflow-hidden z-10 text-left`}
+                              style={{
+                                top: `${topPx}px`,
+                                height: `${heightPx}px`,
+                                left: `calc(${leftPct}% + 2px)`,
+                                width: `calc(${widthPct}% - 4px)`,
+                              }}
+                              title={`${appt.work_order?.work_order_number || ""} — ${appt.customer_name || ""}\n${appt.service_address || ""}${appt.city ? ", " + appt.city : ""}\n${formatTime(appt.start_time)}${appt.end_time ? " - " + formatTime(appt.end_time) : ""}`}
                             >
-                              <p className={`text-xs font-semibold ${color.text}`}>
+                              <p className={`${isNarrow ? "text-[10px]" : "text-xs"} font-semibold ${color.text} truncate`}>
                                 {appt.work_order?.work_order_number || `WO-${appt.work_order_id}`}
                               </p>
-                              <p className="text-xs font-medium text-gray-900 truncate mt-0.5">
+                              <p className={`${isNarrow ? "text-[10px]" : "text-xs"} font-medium text-gray-900 truncate`}>
                                 {appt.customer_name || "Customer"}
                               </p>
                               {heightPx > 50 && appt.service_address && (
-                                <p className="text-[11px] text-gray-500 truncate">
+                                <p className="text-[10px] text-gray-500 truncate">
                                   {appt.service_address}
                                 </p>
                               )}
-                              <p className="text-[11px] text-gray-400 mt-0.5">
-                                {formatTime(appt.start_time)}
-                                {appt.end_time && ` - ${formatTime(appt.end_time)}`}
-                              </p>
+                              {heightPx > 70 && (
+                                <p className="text-[10px] text-gray-400 mt-0.5 truncate">
+                                  {formatTime(appt.start_time)}
+                                  {appt.end_time && ` - ${formatTime(appt.end_time)}`}
+                                </p>
+                              )}
                             </button>
                           );
                         })}
@@ -474,7 +626,7 @@ function SchedulingContent() {
                 {Array.from({ length: 7 }, (_, i) => {
                   const day = addDays(startOfWeek(currentDate), i);
                   const ds = dateStr(day);
-                  const dayAppts = appointments.filter(
+                  const dayAppts = visibleAppointments.filter(
                     (a) => a.appointment_date === ds
                   );
                   const isToday = ds === dateStr(new Date());
@@ -562,7 +714,7 @@ function SchedulingContent() {
               for (let d = 1; d <= daysInMonth; d++) {
                 const ds = dateStr(new Date(y, m, d));
                 const isToday = ds === dateStr(new Date());
-                const dayAppts = appointments.filter(
+                const dayAppts = visibleAppointments.filter(
                   (a) => a.appointment_date === ds
                 );
 
