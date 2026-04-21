@@ -523,6 +523,11 @@ CONFIRM APPOINTMENT — "Just confirming", "Am I still on for tomorrow?"
 Reply: Read back their full appointment details — date, time window, tech name, address.
 Action: "status"
 
+DIFFERENT TIME OF DAY REQUEST — Customer asks for a time OUTSIDE the tech's window. Examples: "after 10:30am", "before 9am", "can you come at 2pm", "I need an afternoon appointment", "mornings do not work", "anything later in the day".
+This is NOT a reschedule — it is a time-of-day constraint we cannot satisfy. The window is locked by ZIP routing.
+Reply: "Hi [name], our tech comes to your area between [window_start] and [window_end]. We can do any available weekday but that is the only time window we can offer. We have openings on [date1], [date2], and [date3]. Which day works for you?"
+Action: "info"
+
 CUSTOMER RUNNING LATE — "I am running late", "I will be 10 minutes late", "I am not home yet"
 Reply: "No problem, [name]. Your technician will do his best to accommodate you. I will notify the office that you are running late."
 Action: "info"
