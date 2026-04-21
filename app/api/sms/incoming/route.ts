@@ -24,8 +24,14 @@ export async function POST(request: NextRequest) {
     const to = formData.get("To")?.toString() || "";
     const body = formData.get("Body")?.toString() || "";
     const messageSid = formData.get("MessageSid")?.toString() || "";
+    const numMedia = parseInt(formData.get("NumMedia")?.toString() || "0", 10);
+    const mediaUrls: string[] = [];
+    for (let i = 0; i < numMedia; i++) {
+      const url = formData.get(`MediaUrl${i}`)?.toString();
+      if (url) mediaUrls.push(url);
+    }
 
-    console.log(`[SMS] From: ${from}, To: ${to}, Body: "${body}"`);
+    console.log(`[SMS] From: ${from}, To: ${to}, Body: "${body}", Media: ${numMedia}`);
 
     const sb = supabaseAdmin();
 
@@ -79,7 +85,71 @@ export async function POST(request: NextRequest) {
       direction: "inbound",
       body,
       message_sid: messageSid,
+      media_urls: mediaUrls.length ? mediaUrls : null,
+      status: "received",
     });
+
+    // ── STOP / HELP / START keyword handling (compliance) ──
+    const trimmed = body.trim().toUpperCase();
+    const STOP_WORDS = ["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"];
+    const START_WORDS = ["START", "UNSTOP", "YES"];
+    const HELP_WORDS = ["HELP", "INFO"];
+
+    if (STOP_WORDS.includes(trimmed)) {
+      await sb.from("sms_optouts").upsert(
+        { tenant_id: tenantId, phone: from, keyword: trimmed },
+        { onConflict: "tenant_id,phone" }
+      );
+      // Twilio auto-sends STOP confirmation; we stay silent.
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
+        { status: 200, headers: { "Content-Type": "text/xml" } }
+      );
+    }
+
+    if (trimmed === "START" || trimmed === "UNSTOP") {
+      await sb.from("sms_optouts").delete().eq("tenant_id", tenantId).eq("phone", from);
+    }
+
+    if (HELP_WORDS.includes(trimmed)) {
+      await sendTwilioSms(sb, tenantId, from, `${tenantInfo.name || "Field Boss Pro"}: Reply STOP to opt out. Msg&data rates may apply. Call ${tenantInfo.phone || "us"} for help.`);
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
+        { status: 200, headers: { "Content-Type": "text/xml" } }
+      );
+    }
+
+    // If opted out and not a START word, do not reply
+    if (!START_WORDS.includes(trimmed)) {
+      const { data: optout } = await sb
+        .from("sms_optouts")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("phone", from)
+        .maybeSingle();
+      if (optout) {
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
+          { status: 200, headers: { "Content-Type": "text/xml" } }
+        );
+      }
+    }
+
+    // ── AI-pause check: if a tenant user took over the thread, skip Claude ──
+    const { data: threadState } = await sb
+      .from("sms_thread_state")
+      .select("ai_paused")
+      .eq("tenant_id", tenantId)
+      .eq("phone", from)
+      .maybeSingle();
+
+    if (threadState?.ai_paused) {
+      console.log(`[SMS] Thread paused for ${from}, skipping AI reply`);
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
+        { status: 200, headers: { "Content-Type": "text/xml" } }
+      );
+    }
 
     // Fetch recent conversation history (last 10 messages, filtered by tenant)
     const { data: convHistory } = await sb
@@ -235,21 +305,26 @@ export async function POST(request: NextRequest) {
 
     if (twilioIntegration && replyText) {
       const creds = twilioIntegration.encrypted_keys as any;
+      const statusCallback = `${APP_URL}/api/sms/status`;
       const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Messages.json`;
       const basicAuth = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString("base64");
 
-      await fetch(twilioUrl, {
+      const twilioParams: Record<string, string> = {
+        From: creds.phoneNumber,
+        To: from,
+        Body: replyText,
+        StatusCallback: statusCallback,
+      };
+
+      const twilioRes = await fetch(twilioUrl, {
         method: "POST",
         headers: {
           Authorization: `Basic ${basicAuth}`,
           "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: new URLSearchParams({
-          From: creds.phoneNumber,
-          To: from,
-          Body: replyText,
-        }),
+        body: new URLSearchParams(twilioParams),
       });
+      const twilioData: any = await twilioRes.json().catch(() => ({}));
 
       // Store outbound in conversation history
       await sb.from("sms_conversations").insert({
@@ -257,6 +332,8 @@ export async function POST(request: NextRequest) {
         phone: from,
         direction: "outbound",
         body: replyText,
+        message_sid: twilioData.sid || null,
+        status: twilioData.status || "queued",
       });
 
       // Log outbound
@@ -291,6 +368,38 @@ export async function POST(request: NextRequest) {
       { status: 200, headers: { "Content-Type": "text/xml" } }
     );
   }
+}
+
+async function sendTwilioSms(sb: any, tenantId: number, toPhone: string, body: string) {
+  const { data: integration } = await sb
+    .from("tenant_integrations")
+    .select("encrypted_keys")
+    .eq("tenant_id", tenantId)
+    .eq("integration_type", "twilio")
+    .eq("is_configured", true)
+    .single();
+  if (!integration) return;
+  const creds = integration.encrypted_keys as any;
+  const statusCallback = `${APP_URL}/api/sms/status`;
+  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Messages.json`;
+  const basicAuth = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString("base64");
+  const res = await fetch(twilioUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ From: creds.phoneNumber, To: toPhone, Body: body, StatusCallback: statusCallback }),
+  });
+  const data: any = await res.json().catch(() => ({}));
+  await sb.from("sms_conversations").insert({
+    tenant_id: tenantId,
+    phone: toPhone,
+    direction: "outbound",
+    body,
+    message_sid: data.sid || null,
+    status: data.status || "queued",
+  });
 }
 
 async function classifyIntent(

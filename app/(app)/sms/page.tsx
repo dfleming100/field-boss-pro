@@ -8,13 +8,20 @@ import {
   MessageSquare,
   Send,
   Search,
-  Phone,
   PhoneCall,
   User,
-  Clock,
   ChevronLeft,
   Circle,
   RefreshCw,
+  Paperclip,
+  X,
+  Pause,
+  Play,
+  CheckCheck,
+  Check,
+  AlertCircle,
+  Clock,
+  Image as ImageIcon,
 } from "lucide-react";
 
 interface Conversation {
@@ -25,16 +32,30 @@ interface Conversation {
   last_time: string;
   unread_count: number;
   direction: string;
+  ai_paused: boolean;
 }
 
 interface Message {
   id: number;
   phone: string;
   direction: string;
-  body: string;
+  body: string | null;
   created_at: string;
   message_sid: string | null;
+  status: string | null;
+  media_urls: string[] | null;
+  error_code: string | null;
+  error_message: string | null;
+  work_order_id: number | null;
 }
+
+interface ThreadState {
+  phone: string;
+  ai_paused: boolean;
+  last_read_at: string | null;
+}
+
+type Pending = { file: File; previewUrl: string };
 
 export default function SMSCommandCenter() {
   const { tenantUser } = useAuth();
@@ -44,67 +65,69 @@ export default function SMSCommandCenter() {
   const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
+  const [pending, setPending] = useState<Pending[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  // Track last-read timestamp per phone so only NEW inbound messages show as unread
-  const [readTimestamps, setReadTimestamps] = useState<Record<string, string>>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem("sms_read_timestamps");
-        return saved ? JSON.parse(saved) : {};
-      } catch { return {}; }
-    }
-    return {};
-  });
+  const [threadStates, setThreadStates] = useState<Record<string, ThreadState>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch conversation list
+  const tenantId = tenantUser?.tenant_id;
+
+  const fetchThreadStates = useCallback(async () => {
+    if (!tenantId) return;
+    const { data } = await supabase
+      .from("sms_thread_state")
+      .select("phone, ai_paused, last_read_at")
+      .eq("tenant_id", tenantId);
+    if (data) {
+      const map: Record<string, ThreadState> = {};
+      for (const s of data as any[]) map[s.phone] = s;
+      setThreadStates(map);
+    }
+  }, [tenantId]);
+
   const fetchConversations = useCallback(async () => {
-    if (!tenantUser) return;
+    if (!tenantId) return;
 
     const { data } = await supabase
       .from("sms_conversations")
       .select("phone, direction, body, created_at")
-      .eq("tenant_id", tenantUser.tenant_id)
+      .eq("tenant_id", tenantId)
       .order("created_at", { ascending: false });
 
     if (!data) return;
 
-    // Group by phone, get last message and unread count
     const phoneMap: Record<string, Conversation> = {};
-    const unreadAfterRead: Record<string, number> = {};
 
     for (const msg of data) {
-      // Skip malformed phone values (e.g. "+", empty, or too short to be a real number)
       const digits = (msg.phone || "").replace(/\D/g, "");
       if (digits.length < 7) continue;
 
+      const lastRead = threadStates[msg.phone]?.last_read_at;
       if (!phoneMap[msg.phone]) {
         phoneMap[msg.phone] = {
           phone: msg.phone,
           customer_name: null,
           customer_id: null,
-          last_message: msg.body,
+          last_message: msg.body || "[attachment]",
           last_time: msg.created_at,
           unread_count: 0,
           direction: msg.direction,
+          ai_paused: !!threadStates[msg.phone]?.ai_paused,
         };
       }
-      // Only count inbound messages NEWER than when we last read this conversation
-      const lastRead = readTimestamps[msg.phone];
       if (msg.direction === "inbound" && (!lastRead || msg.created_at > lastRead)) {
         phoneMap[msg.phone].unread_count++;
       }
     }
 
-    // Look up customer names in a single batch query instead of N+1
     const phones = Object.keys(phoneMap);
     const { data: allCustomers } = await supabase
       .from("customers")
       .select("id, customer_name, phone")
-      .eq("tenant_id", tenantUser.tenant_id);
+      .eq("tenant_id", tenantId);
 
     if (allCustomers) {
       for (const phone of phones) {
@@ -124,81 +147,151 @@ export default function SMSCommandCenter() {
       }
     }
 
-    // Sort by most recent
     const sorted = Object.values(phoneMap).sort(
       (a, b) => new Date(b.last_time).getTime() - new Date(a.last_time).getTime()
     );
 
     setConversations(sorted);
     setIsLoading(false);
-  }, [tenantUser, readTimestamps]);
+  }, [tenantId, threadStates]);
 
-  // Fetch messages for selected conversation
   const fetchMessages = useCallback(async (phone: string) => {
     const { data } = await supabase
       .from("sms_conversations")
       .select("*")
       .eq("phone", phone)
       .order("created_at", { ascending: true });
-
-    if (data) setMessages(data);
+    if (data) setMessages(data as any);
   }, []);
 
-  // Initial load
+  useEffect(() => {
+    fetchThreadStates();
+  }, [fetchThreadStates]);
+
   useEffect(() => {
     fetchConversations();
   }, [fetchConversations]);
 
-  // Poll for new messages every 5 seconds
+  // Supabase Realtime: listen for new/updated conversations
   useEffect(() => {
-    pollRef.current = setInterval(() => {
-      fetchConversations();
-      if (selectedPhone) fetchMessages(selectedPhone);
-    }, 5000);
+    if (!tenantId) return;
+    const channel = supabase
+      .channel(`sms-conversations-${tenantId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sms_conversations", filter: `tenant_id=eq.${tenantId}` },
+        (payload: any) => {
+          fetchConversations();
+          const row = payload.new || payload.old;
+          if (row && selectedPhone && row.phone === selectedPhone) {
+            fetchMessages(selectedPhone);
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sms_thread_state", filter: `tenant_id=eq.${tenantId}` },
+        () => fetchThreadStates()
+      )
+      .subscribe();
 
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      supabase.removeChannel(channel);
     };
-  }, [fetchConversations, fetchMessages, selectedPhone]);
+  }, [tenantId, selectedPhone, fetchConversations, fetchMessages, fetchThreadStates]);
 
-  // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Select a conversation
+  const markRead = useCallback(async (phone: string) => {
+    if (!tenantId) return;
+    await fetch("/api/sms/thread-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenant_id: tenantId, phone, mark_read: true }),
+    });
+    fetchThreadStates();
+  }, [tenantId, fetchThreadStates]);
+
   const selectConversation = (conv: Conversation) => {
     setSelectedPhone(conv.phone);
     setSelectedCustomer(conv.customer_name);
-    setReadTimestamps((prev) => {
-      const next = { ...prev, [conv.phone]: new Date().toISOString() };
-      try { localStorage.setItem("sms_read_timestamps", JSON.stringify(next)); } catch {}
-      return next;
-    });
     fetchMessages(conv.phone);
+    markRead(conv.phone);
   };
 
-  // Send manual message
+  const togglePause = async () => {
+    if (!selectedPhone || !tenantId) return;
+    const current = threadStates[selectedPhone]?.ai_paused || false;
+    await fetch("/api/sms/thread-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenant_id: tenantId, phone: selectedPhone, ai_paused: !current }),
+    });
+    fetchThreadStates();
+  };
+
+  const onPickFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const picked = files.map((f) => ({ file: f, previewUrl: URL.createObjectURL(f) }));
+    setPending((prev) => [...prev, ...picked].slice(0, 10));
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const removePending = (i: number) => {
+    setPending((prev) => {
+      const copy = [...prev];
+      URL.revokeObjectURL(copy[i].previewUrl);
+      copy.splice(i, 1);
+      return copy;
+    });
+  };
+
+  const uploadAttachments = async (): Promise<string[]> => {
+    if (!tenantId || pending.length === 0) return [];
+    const urls: string[] = [];
+    for (const p of pending) {
+      const ext = p.file.name.split(".").pop() || "bin";
+      const path = `${tenantId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { error } = await supabase.storage.from("sms-attachments").upload(path, p.file, {
+        contentType: p.file.type,
+        upsert: false,
+      });
+      if (error) {
+        console.error("Upload failed:", error);
+        continue;
+      }
+      const { data } = supabase.storage.from("sms-attachments").getPublicUrl(path);
+      if (data?.publicUrl) urls.push(data.publicUrl);
+    }
+    return urls;
+  };
+
   const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedPhone) return;
+    if ((!newMessage.trim() && pending.length === 0) || !selectedPhone) return;
     setIsSending(true);
 
     try {
-      // Send via API
+      const mediaUrls = await uploadAttachments();
       const res = await fetch("/api/sms/send-manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: selectedPhone,
           body: newMessage.trim(),
-          tenant_id: tenantUser?.tenant_id,
+          tenant_id: tenantId,
+          media_urls: mediaUrls.length ? mediaUrls : undefined,
         }),
       });
-
       if (res.ok) {
         setNewMessage("");
-        await fetchMessages(selectedPhone);
-        await fetchConversations();
+        pending.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+        setPending([]);
+        fetchMessages(selectedPhone);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Send failed: ${err.error || res.statusText}`);
       }
     } catch (err) {
       console.error("Send failed:", err);
@@ -207,16 +300,12 @@ export default function SMSCommandCenter() {
     }
   };
 
-  // Supabase returns timestamps without a timezone marker (e.g. "2026-04-10 19:37:46.942871").
-  // JavaScript would parse that as LOCAL time, but the value is actually UTC — so we
-  // normalize by appending "Z" when no offset is present.
   const parseUtc = (ts: string): Date => {
     const hasOffset = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(ts);
     const normalized = hasOffset ? ts : ts.replace(" ", "T") + "Z";
     return new Date(normalized);
   };
 
-  // Format timestamp
   const formatTime = (ts: string) => {
     const d = parseUtc(ts);
     const now = new Date();
@@ -224,37 +313,38 @@ export default function SMSCommandCenter() {
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
-
     if (diffMins < 1) return "Just now";
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-    return d.toLocaleDateString("en-US", {
-      month: "short", day: "numeric",
-      timeZone: "America/Chicago",
-    });
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
   };
 
   const formatFullTime = (ts: string) => {
     const d = parseUtc(ts);
     return d.toLocaleString("en-US", {
       month: "short", day: "numeric", year: "numeric",
-      hour: "numeric", minute: "2-digit",
-      timeZone: "America/Chicago",
+      hour: "numeric", minute: "2-digit", timeZone: "America/Chicago",
     });
   };
 
-  // Format phone for display
   const formatPhone = (phone: string) => {
     const digits = phone.replace(/\D/g, "");
     const num = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
-    if (num.length === 10) {
-      return `(${num.slice(0, 3)}) ${num.slice(3, 6)}-${num.slice(6)}`;
-    }
+    if (num.length === 10) return `(${num.slice(0, 3)}) ${num.slice(3, 6)}-${num.slice(6)}`;
     return phone;
   };
 
-  // Filter conversations
+  const renderStatus = (msg: Message) => {
+    if (msg.direction !== "outbound") return null;
+    const s = (msg.status || "").toLowerCase();
+    if (s === "delivered") return <span className="inline-flex items-center gap-0.5 text-green-400" title="Delivered"><CheckCheck size={11} /></span>;
+    if (s === "sent") return <span className="inline-flex items-center gap-0.5 text-gray-300" title="Sent"><Check size={11} /></span>;
+    if (s === "queued" || s === "sending") return <span className="inline-flex items-center gap-0.5 text-gray-300" title="Queued"><Clock size={11} /></span>;
+    if (s === "failed" || s === "undelivered") return <span className="inline-flex items-center gap-0.5 text-red-300" title={msg.error_message || "Failed"}><AlertCircle size={11} /></span>;
+    return null;
+  };
+
   const filtered = conversations.filter((c) => {
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
@@ -265,8 +355,8 @@ export default function SMSCommandCenter() {
     );
   });
 
-  // Total unread
   const totalUnread = conversations.reduce((sum, c) => sum + c.unread_count, 0);
+  const currentPaused = selectedPhone ? threadStates[selectedPhone]?.ai_paused : false;
 
   if (isLoading) {
     return (
@@ -278,7 +368,6 @@ export default function SMSCommandCenter() {
 
   return (
     <div className="h-[calc(100vh-7rem)]">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-gray-900">SMS Command Center</h1>
@@ -289,7 +378,7 @@ export default function SMSCommandCenter() {
           )}
         </div>
         <button
-          onClick={() => fetchConversations()}
+          onClick={() => { fetchConversations(); if (selectedPhone) fetchMessages(selectedPhone); }}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition"
         >
           <RefreshCw size={14} />
@@ -298,9 +387,8 @@ export default function SMSCommandCenter() {
       </div>
 
       <div className="flex bg-white rounded-xl border border-gray-200 overflow-hidden h-[calc(100%-3rem)]">
-        {/* Left Panel: Conversation List */}
+        {/* Left Panel */}
         <div className={`w-80 border-r border-gray-200 flex flex-col flex-shrink-0 ${selectedPhone ? "hidden md:flex" : "flex"}`}>
-          {/* Search */}
           <div className="p-3 border-b border-gray-200">
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -314,7 +402,6 @@ export default function SMSCommandCenter() {
             </div>
           </div>
 
-          {/* Conversations */}
           <div className="flex-1 overflow-y-auto">
             {filtered.length === 0 ? (
               <div className="p-6 text-center text-sm text-gray-400">
@@ -324,7 +411,6 @@ export default function SMSCommandCenter() {
               filtered.map((conv) => {
                 const isSelected = selectedPhone === conv.phone;
                 const isUnread = conv.unread_count > 0;
-
                 return (
                   <button
                     key={conv.phone}
@@ -336,12 +422,16 @@ export default function SMSCommandCenter() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          {isUnread && (
-                            <Circle size={8} className="text-blue-500 fill-blue-500 flex-shrink-0" />
-                          )}
+                          {isUnread && <Circle size={8} className="text-blue-500 fill-blue-500 flex-shrink-0" />}
                           <p className={`text-sm truncate ${isUnread ? "font-bold text-gray-900" : "font-medium text-gray-700"}`}>
                             {conv.customer_name || formatPhone(conv.phone)}
                           </p>
+                          {conv.ai_paused && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-700 bg-amber-100 rounded px-1" title="AI paused">
+                              <Pause size={8} />
+                              AI OFF
+                            </span>
+                          )}
                         </div>
                         {conv.customer_name && (
                           <p className="text-xs text-gray-400 mt-0.5">{formatPhone(conv.phone)}</p>
@@ -366,7 +456,7 @@ export default function SMSCommandCenter() {
           </div>
         </div>
 
-        {/* Right Panel: Message Thread */}
+        {/* Right Panel */}
         <div className={`flex-1 flex flex-col ${!selectedPhone ? "hidden md:flex" : "flex"}`}>
           {!selectedPhone ? (
             <div className="flex-1 flex items-center justify-center">
@@ -377,7 +467,6 @@ export default function SMSCommandCenter() {
             </div>
           ) : (
             <>
-              {/* Thread Header */}
               <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between bg-gray-50">
                 <div className="flex items-center gap-3">
                   <button
@@ -398,6 +487,18 @@ export default function SMSCommandCenter() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
+                    onClick={togglePause}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition ${
+                      currentPaused
+                        ? "text-amber-700 bg-amber-50 hover:bg-amber-100"
+                        : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                    }`}
+                    title={currentPaused ? "Resume AI auto-reply" : "Pause AI auto-reply and take over"}
+                  >
+                    {currentPaused ? <Play size={14} /> : <Pause size={14} />}
+                    {currentPaused ? "Resume AI" : "Pause AI"}
+                  </button>
+                  <button
                     onClick={() => openSoftphone(selectedPhone, selectedCustomer || undefined)}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition"
                   >
@@ -407,32 +508,50 @@ export default function SMSCommandCenter() {
                 </div>
               </div>
 
-              {/* Messages */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50">
                 {messages.map((msg) => {
                   const isOutbound = msg.direction === "outbound";
+                  const media = msg.media_urls || [];
                   return (
-                    <div
-                      key={msg.id}
-                      className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}
-                    >
+                    <div key={msg.id} className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}>
                       <div className={`max-w-[75%] ${isOutbound ? "order-1" : ""}`}>
-                        <div
-                          className={`px-3.5 py-2.5 rounded-2xl text-sm ${
-                            isOutbound
-                              ? "bg-indigo-600 text-white rounded-br-md"
-                              : "bg-white border border-gray-200 text-gray-900 rounded-bl-md"
-                          }`}
-                        >
-                          {msg.body}
-                        </div>
-                        <p
-                          className={`text-[10px] mt-1 px-1 ${
-                            isOutbound ? "text-right text-gray-400" : "text-gray-400"
-                          }`}
-                        >
+                        {media.length > 0 && (
+                          <div className={`mb-1 grid gap-1 ${media.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                            {media.map((url, i) => (
+                              <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="block">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={url}
+                                  alt="attachment"
+                                  className="rounded-lg border border-gray-200 max-h-60 object-cover w-full"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).style.display = "none";
+                                  }}
+                                />
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                        {msg.body && (
+                          <div
+                            className={`px-3.5 py-2.5 rounded-2xl text-sm ${
+                              isOutbound
+                                ? "bg-indigo-600 text-white rounded-br-md"
+                                : "bg-white border border-gray-200 text-gray-900 rounded-bl-md"
+                            }`}
+                          >
+                            {msg.body}
+                          </div>
+                        )}
+                        <p className={`text-[10px] mt-1 px-1 flex items-center gap-1 ${isOutbound ? "justify-end text-gray-400" : "text-gray-400"}`}>
                           {formatFullTime(msg.created_at)}
+                          {renderStatus(msg)}
                         </p>
+                        {msg.error_message && isOutbound && (
+                          <p className="text-[10px] text-red-500 mt-0.5 px-1 text-right">
+                            {msg.error_message}
+                          </p>
+                        )}
                       </div>
                     </div>
                   );
@@ -442,26 +561,65 @@ export default function SMSCommandCenter() {
 
               {/* Send Box */}
               <div className="p-3 border-t border-gray-200 bg-white">
-                <div className="flex gap-2">
+                {pending.length > 0 && (
+                  <div className="flex gap-2 mb-2 flex-wrap">
+                    {pending.map((p, i) => (
+                      <div key={i} className="relative">
+                        {p.file.type.startsWith("image/") ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={p.previewUrl} alt="pending" className="w-16 h-16 rounded-lg object-cover border border-gray-200" />
+                        ) : (
+                          <div className="w-16 h-16 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center">
+                            <ImageIcon size={20} className="text-gray-400" />
+                          </div>
+                        )}
+                        <button
+                          onClick={() => removePending(i)}
+                          className="absolute -top-1 -right-1 w-5 h-5 bg-gray-800 text-white rounded-full flex items-center justify-center hover:bg-black"
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2 items-end">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,video/*,application/pdf"
+                    multiple
+                    onChange={onPickFiles}
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isSending}
+                    className="p-2.5 text-gray-500 hover:text-indigo-600 hover:bg-gray-50 rounded-xl transition"
+                    title="Attach photo or file"
+                  >
+                    <Paperclip size={18} />
+                  </button>
                   <input
                     type="text"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                    placeholder="Type a message..."
+                    placeholder={currentPaused ? "Replying directly — AI is paused" : "Type a message..."}
                     className="flex-1 px-4 py-2.5 text-sm border border-gray-300 rounded-xl focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
                     disabled={isSending}
                   />
                   <button
                     onClick={sendMessage}
-                    disabled={isSending || !newMessage.trim()}
+                    disabled={isSending || (!newMessage.trim() && pending.length === 0)}
                     className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition"
                   >
                     <Send size={16} />
                   </button>
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1 px-1">
-                  Manual message — bypasses AI agent, sends directly from (855) 269-3196
+                  Manual message — bypasses AI agent.
+                  {currentPaused && <span className="ml-1 font-semibold text-amber-700">AI auto-reply paused for this thread.</span>}
                 </p>
               </div>
             </>
