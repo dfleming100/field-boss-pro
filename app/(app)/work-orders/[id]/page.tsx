@@ -361,6 +361,39 @@ export default function WorkOrderDetailPage() {
       setError("Set a service date first");
       return;
     }
+
+    // Remove any existing scheduled appointments for this WO so a reschedule
+    // replaces the old one instead of adding a duplicate. Also releases the
+    // capacity held by the old slot.
+    const { data: existing } = await supabase
+      .from("appointments")
+      .select("id, appointment_date, technician_id")
+      .eq("work_order_id", workOrderId)
+      .eq("status", "scheduled");
+
+    for (const old of existing || []) {
+      if (old.technician_id) {
+        const { data: cap } = await supabase
+          .from("tech_daily_capacity")
+          .select("id, current_appointments")
+          .eq("technician_id", old.technician_id)
+          .eq("date", old.appointment_date)
+          .single();
+        if (cap) {
+          const newCount = Math.max(0, (cap.current_appointments || 1) - 1);
+          if (newCount === 0) {
+            await supabase.from("tech_daily_capacity").delete().eq("id", cap.id);
+          } else {
+            await supabase
+              .from("tech_daily_capacity")
+              .update({ current_appointments: newCount })
+              .eq("id", cap.id);
+          }
+        }
+      }
+      await supabase.from("appointments").delete().eq("id", old.id);
+    }
+
     const { error: insertError } = await supabase.from("appointments").insert({
       tenant_id: tenantUser?.tenant_id,
       work_order_id: workOrderId,
