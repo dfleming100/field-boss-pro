@@ -211,6 +211,7 @@ function SchedulingContent() {
           customer:work_orders!inner(customer:customers(customer_name, service_address, city))
         `)
         .eq("tenant_id", tenantUser.tenant_id)
+        .eq("status", "scheduled")
         .gte("appointment_date", dateRange.start)
         .lte("appointment_date", dateRange.end)
         .order("start_time"),

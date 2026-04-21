@@ -196,7 +196,10 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      await sb.from("appointments").delete().eq("id", oldAppt.id);
+      await sb
+        .from("appointments")
+        .update({ status: "canceled" })
+        .eq("id", oldAppt.id);
     }
 
     // ── Create appointment ──
