@@ -172,17 +172,27 @@ export default function SMSCommandCenter() {
     fetchConversations();
   }, [fetchConversations]);
 
-  // Supabase Realtime: listen for new/updated conversations
+  // Supabase Realtime: listen for new/updated conversations.
+  // Drop server-side filter (bigint/string mismatch) — RLS already scopes delivery.
   useEffect(() => {
     if (!tenantId) return;
+
+    // Make sure the realtime socket has the current JWT
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.access_token) {
+        supabase.realtime.setAuth(data.session.access_token);
+      }
+    });
+
     const channel = supabase
-      .channel(`sms-conversations-${tenantId}`)
+      .channel(`sms-${tenantId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "sms_conversations", filter: `tenant_id=eq.${tenantId}` },
+        { event: "*", schema: "public", table: "sms_conversations" },
         (payload: any) => {
-          fetchConversations();
           const row = payload.new || payload.old;
+          if (row && String(row.tenant_id) !== String(tenantId)) return;
+          fetchConversations();
           if (row && selectedPhone && row.phone === selectedPhone) {
             fetchMessages(selectedPhone);
           }
@@ -190,13 +200,24 @@ export default function SMSCommandCenter() {
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "sms_thread_state", filter: `tenant_id=eq.${tenantId}` },
-        () => fetchThreadStates()
+        { event: "*", schema: "public", table: "sms_thread_state" },
+        (payload: any) => {
+          const row = payload.new || payload.old;
+          if (row && String(row.tenant_id) !== String(tenantId)) return;
+          fetchThreadStates();
+        }
       )
       .subscribe();
 
+    // Polling fallback — guarantees refresh within 10s even if Realtime misses.
+    const poll = setInterval(() => {
+      fetchConversations();
+      if (selectedPhone) fetchMessages(selectedPhone);
+    }, 10000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(poll);
     };
   }, [tenantId, selectedPhone, fetchConversations, fetchMessages, fetchThreadStates]);
 
