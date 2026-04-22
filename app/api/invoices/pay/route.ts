@@ -38,10 +38,12 @@ export async function POST(request: NextRequest) {
     const tenantName = invoice.tenant?.name || "Field Boss Pro";
     const connectAccountId = invoice.tenant?.stripe_connect_account_id;
 
-    // Build checkout session params
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: "payment",
       customer_email: customerEmail,
+      payment_intent_data: {
+        metadata: { invoice_id: String(invoice_id), tenant_id: String(invoice.tenant_id) },
+      },
       metadata: { invoice_id: String(invoice_id), tenant_id: String(invoice.tenant_id) },
       line_items: [
         {
@@ -60,7 +62,6 @@ export async function POST(request: NextRequest) {
       cancel_url: `${appUrl}/invoice/${invoice_id}`,
     };
 
-    // If tenant has Stripe Connect, route payment to their account
     let session: Stripe.Checkout.Session;
     if (connectAccountId) {
       session = await stripe.checkout.sessions.create(sessionParams, {
@@ -70,10 +71,13 @@ export async function POST(request: NextRequest) {
       session = await stripe.checkout.sessions.create(sessionParams);
     }
 
-    // Mark invoice as sent if it was draft
-    if (invoice.status === "draft") {
-      await sb.from("invoices").update({ status: "sent" }).eq("id", invoice_id);
-    }
+    await sb
+      .from("invoices")
+      .update({
+        stripe_checkout_session_id: session.id,
+        status: invoice.status === "draft" ? "sent" : invoice.status,
+      })
+      .eq("id", invoice_id);
 
     return NextResponse.json({ url: session.url });
   } catch (error) {

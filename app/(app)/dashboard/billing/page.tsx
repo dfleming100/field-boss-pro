@@ -27,6 +27,14 @@ function BillingContent() {
   const [techCount, setTechCount] = useState(0);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSubscribing, setIsSubscribing] = useState(false);
+  const [connectLive, setConnectLive] = useState<{
+    status: string;
+    charges_enabled?: boolean;
+    payouts_enabled?: boolean;
+    details_submitted?: boolean;
+    requirements_currently_due?: string[];
+    resume_url?: string | null;
+  } | null>(null);
 
   // Check URL params for return status
   useEffect(() => {
@@ -66,6 +74,19 @@ function BillingContent() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    if (!tenant?.stripe_connect_account_id || !tenantUser?.tenant_id) {
+      setConnectLive(null);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await fetch(`/api/stripe/connect-status?tenantId=${tenantUser.tenant_id}`);
+        if (res.ok) setConnectLive(await res.json());
+      } catch {}
+    })();
+  }, [tenant?.stripe_connect_account_id, tenantUser?.tenant_id]);
 
   // ── Subscribe to Field Boss Pro ──
   const handleSubscribe = async () => {
@@ -319,17 +340,51 @@ function BillingContent() {
 
         {hasConnect ? (
           <div>
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
-              <div className="flex items-center gap-2 mb-1">
-                <CheckCircle2 size={16} className="text-green-600" />
-                <span className="text-sm font-semibold text-green-700">
-                  Stripe Connected
-                </span>
+            {connectLive?.status === "active" ? (
+              <div className="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <CheckCircle2 size={16} className="text-green-600" />
+                  <span className="text-sm font-semibold text-green-700">Ready to collect payments</span>
+                </div>
+                <p className="text-xs text-green-600 ml-6">
+                  Charges and payouts enabled · Account {tenant?.stripe_connect_account_id?.substring(0, 18)}…
+                </p>
               </div>
-              <p className="text-xs text-green-600 ml-6">
-                Account: {tenant?.stripe_connect_account_id?.substring(0, 24)}...
-              </p>
-            </div>
+            ) : connectLive?.status === "pending_review" ? (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg mb-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <AlertCircle size={16} className="text-amber-600" />
+                  <span className="text-sm font-semibold text-amber-700">Stripe is reviewing your account</span>
+                </div>
+                <p className="text-xs text-amber-700 ml-6">
+                  You&apos;ll be able to collect payments once review is complete (usually 1–2 business days).
+                </p>
+              </div>
+            ) : connectLive?.status === "incomplete" ? (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <AlertCircle size={16} className="text-red-600" />
+                  <span className="text-sm font-semibold text-red-700">Onboarding incomplete</span>
+                </div>
+                <p className="text-xs text-red-700 ml-6 mb-2">
+                  {connectLive.requirements_currently_due?.length
+                    ? `Stripe still needs: ${connectLive.requirements_currently_due.slice(0, 3).join(", ")}`
+                    : "Finish Stripe onboarding to start collecting payments."}
+                </p>
+                {connectLive.resume_url && (
+                  <a
+                    href={connectLive.resume_url}
+                    className="ml-6 inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700"
+                  >
+                    Resume Onboarding <ExternalLink size={12} />
+                  </a>
+                )}
+              </div>
+            ) : (
+              <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg mb-4">
+                <p className="text-xs text-gray-600">Checking Stripe account status…</p>
+              </div>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={handleConnectStripe}

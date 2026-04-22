@@ -5,7 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { ArrowLeft, Send, CheckCircle2, Printer, Pencil, Save, Plus, Trash2, X, MessageSquare, Mail, Link2 } from "lucide-react";
+import { ArrowLeft, Send, CheckCircle2, Printer, Pencil, Save, Plus, Trash2, X, MessageSquare, Mail, Link2, DollarSign } from "lucide-react";
 
 interface LineItem {
   id: number | string;
@@ -40,6 +40,40 @@ export default function InvoiceDetailPage() {
   const [taxRate, setTaxRate] = useState(0);
   const [notes, setNotes] = useState("");
   const [editItems, setEditItems] = useState<LineItem[]>([]);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "check" | "other">("cash");
+  const [paymentAmount, setPaymentAmount] = useState<string>("");
+  const [paymentNote, setPaymentNote] = useState("");
+  const [isRecordingPayment, setIsRecordingPayment] = useState(false);
+
+  const recordPayment = async () => {
+    const amt = Number(paymentAmount);
+    if (!amt || amt <= 0) {
+      setError("Enter a valid amount");
+      return;
+    }
+    setIsRecordingPayment(true);
+    setError("");
+    try {
+      const res = await fetch("/api/invoices/mark-paid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoice_id: invoiceId, amount: amt, method: paymentMethod, note: paymentNote || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to record payment");
+        return;
+      }
+      setSuccessMsg(data.fullyPaid ? "Invoice paid in full" : `Payment recorded — $${Number(data.amount_paid).toFixed(2)} of total`);
+      setTimeout(() => setSuccessMsg(""), 4000);
+      setPaymentModalOpen(false);
+      setPaymentNote("");
+      await fetchInvoice();
+    } finally {
+      setIsRecordingPayment(false);
+    }
+  };
 
   const fetchInvoice = useCallback(async () => {
     if (!tenantUser) return;
@@ -272,9 +306,16 @@ export default function InvoiceDetailPage() {
               <button onClick={copyLink} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100">
                 <Link2 size={14} /> Copy Link
               </button>
-              {(invoice.status === "sent" || invoice.status === "overdue") && (
-                <button onClick={() => updateStatus("paid")} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100">
-                  <CheckCircle2 size={14} /> Mark Paid
+              {invoice.status !== "paid" && (
+                <button
+                  onClick={() => {
+                    const outstanding = Math.max(0, Number(invoice.total || 0) - Number(invoice.amount_paid || 0));
+                    setPaymentAmount(outstanding.toFixed(2));
+                    setPaymentModalOpen(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100"
+                >
+                  <DollarSign size={14} /> Record Payment
                 </button>
               )}
               <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100">
@@ -461,6 +502,72 @@ export default function InvoiceDetailPage() {
           </div>
         ) : null}
       </div>
+
+      {paymentModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={() => setPaymentModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-xl w-full max-w-sm p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Record Payment</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Log a cash, check, or other manual payment against this invoice.
+            </p>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Method</label>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              {(["cash", "check", "other"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setPaymentMethod(m)}
+                  className={`px-3 py-2 text-sm font-medium rounded-lg border capitalize ${
+                    paymentMethod === m
+                      ? "bg-indigo-600 text-white border-indigo-600"
+                      : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Amount</label>
+            <input
+              type="number"
+              step="0.01"
+              value={paymentAmount}
+              onChange={(e) => setPaymentAmount(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg mb-3"
+              placeholder="0.00"
+              autoFocus
+            />
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Note (optional)</label>
+            <input
+              type="text"
+              value={paymentNote}
+              onChange={(e) => setPaymentNote(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg mb-4"
+              placeholder="Check #1234, tip included, etc."
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPaymentModalOpen(false)}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={recordPayment}
+                disabled={isRecordingPayment}
+                className="flex-1 px-4 py-2 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {isRecordingPayment ? "Recording..." : "Record Payment"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
