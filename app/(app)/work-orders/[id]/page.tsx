@@ -20,6 +20,7 @@ import {
   Plus,
   Save,
   FileText,
+  Link2,
   MessageSquare,
   Send,
   Camera,
@@ -523,6 +524,22 @@ export default function WorkOrderDetailPage() {
           <FileText size={16} />
           Create Invoice
         </Link>
+        {workOrder.portal_token && (
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}/portal/${workOrder.portal_token}`;
+              navigator.clipboard.writeText(url).then(() => {
+                setSuccessMsg("Customer portal link copied to clipboard");
+                setTimeout(() => setSuccessMsg(""), 2500);
+              });
+            }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200"
+            title="Copy a link you can text or email to the customer"
+          >
+            <Link2 size={16} />
+            Copy Portal Link
+          </button>
+        )}
       </div>
 
       {error && (
