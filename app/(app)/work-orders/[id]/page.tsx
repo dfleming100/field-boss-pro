@@ -23,6 +23,7 @@ import {
   Send,
   Camera,
   X,
+  Trash2,
 } from "lucide-react";
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
@@ -160,7 +161,15 @@ export default function WorkOrderDetailPage() {
     if (!tenantUser) return;
     const { data, error } = await supabase
       .from("appointments")
-      .select(`*, technician:technicians!technician_id(tech_name)`)
+      .select(`
+        *,
+        technician:technicians!technician_id(tech_name),
+        work_order:work_orders(
+          job_type,
+          work_order_number,
+          customer:customers(zip)
+        )
+      `)
       .eq("tenant_id", tenantUser.tenant_id)
       .eq("work_order_id", workOrderId)
       .order("created_at", { ascending: false });
@@ -780,65 +789,73 @@ export default function WorkOrderDetailPage() {
                 <h3 className="text-sm font-semibold text-gray-700 mb-2">
                   Appointment History
                 </h3>
-                <div className="space-y-2">
+                <div className="divide-y divide-gray-100 border border-gray-200 rounded-lg">
                   {appointments.map((appt) => {
                     const isCanceled = appt.status === "canceled";
+                    const techName = appt.technician?.tech_name || "Unassigned";
+                    const jobType = appt.work_order?.job_type || "Service";
+                    const zip = appt.work_order?.customer?.zip || "";
+                    const woNum = appt.work_order?.work_order_number || workOrder?.work_order_number || "";
+
+                    // Duration in hours (e.g., "2.00")
+                    let duration = "";
+                    if (appt.start_time && appt.end_time) {
+                      const [sh, sm] = appt.start_time.split(":").map(Number);
+                      const [eh, em] = appt.end_time.split(":").map(Number);
+                      const mins = (eh * 60 + em) - (sh * 60 + sm);
+                      duration = (mins / 60).toFixed(2);
+                    }
+
+                    const dateDisplay = new Date(appt.appointment_date + "T00:00:00").toLocaleDateString(
+                      "en-US",
+                      { month: "numeric", day: "numeric", year: "numeric" }
+                    ).replace(/\//g, "-");
+
+                    const timeDisplay = appt.start_time
+                      ? (() => {
+                          const [h, m] = appt.start_time.split(":").map(Number);
+                          const ampm = h >= 12 ? "PM" : "AM";
+                          const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+                          return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+                        })()
+                      : "";
+
                     return (
                       <div
                         key={appt.id}
-                        className={`flex items-center justify-between p-3 rounded-lg border ${
-                          isCanceled
-                            ? "bg-gray-50/50 border-gray-200 opacity-70"
-                            : "bg-gray-50 border-gray-200"
+                        className={`flex items-start justify-between px-4 py-3 ${
+                          isCanceled ? "opacity-50" : ""
                         }`}
                       >
-                        <div className="flex items-center gap-3">
-                          <CalendarDays
-                            size={16}
-                            className={isCanceled ? "text-gray-400" : "text-purple-500"}
-                          />
-                          <div>
-                            <p
-                              className={`text-sm font-medium ${
-                                isCanceled ? "text-gray-500 line-through" : "text-gray-900"
-                              }`}
-                            >
-                              {new Date(appt.appointment_date + "T00:00:00").toLocaleDateString("en-US", {
-                                weekday: "short", month: "short", day: "numeric",
-                              })}
-                              {appt.start_time && ` ${appt.start_time.slice(0, 5)}`}
-                              {appt.end_time && ` - ${appt.end_time.slice(0, 5)}`}
-                            </p>
-                            <p className="text-xs text-gray-500 flex items-center gap-1.5">
-                              <span>{appt.technician?.tech_name || "Unassigned"}</span>
-                              <span>&middot;</span>
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                                  isCanceled
-                                    ? "bg-gray-200 text-gray-600"
-                                    : "bg-green-100 text-green-700"
-                                }`}
-                              >
-                                {isCanceled ? "Canceled" : "Scheduled"}
-                              </span>
-                            </p>
-                          </div>
+                        <div className={isCanceled ? "line-through" : ""}>
+                          <p className="text-sm">
+                            <span className="font-semibold text-gray-900">{techName}</span>
+                            <span className="text-gray-600">
+                              {"  "}
+                              {jobType}
+                              {zip && ` - ${zip}`}
+                              {woNum && ` - ${woNum}`}
+                            </span>
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1 flex items-center gap-1.5">
+                            <CalendarDays size={12} className="text-gray-400" />
+                            <span>
+                              {dateDisplay}
+                              {timeDisplay && ` ${timeDisplay}`}
+                              {duration && ` for ${duration} hr(s)`}
+                            </span>
+                          </p>
                         </div>
                         {!isCanceled && (
-                          <div className="flex items-center gap-2">
-                            <Link
-                              href={`/scheduling?date=${appt.appointment_date}`}
-                              className="text-xs text-indigo-600 hover:text-indigo-700"
-                            >
-                              View
-                            </Link>
-                            <button
-                              onClick={() => cancelAppointment(appt.id, appt.appointment_date, appt.technician_id)}
-                              className="text-xs text-red-600 hover:text-red-700 font-medium"
-                            >
-                              Cancel
-                            </button>
-                          </div>
+                          <button
+                            onClick={() =>
+                              cancelAppointment(appt.id, appt.appointment_date, appt.technician_id)
+                            }
+                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                            title="Cancel appointment"
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         )}
                       </div>
                     );
