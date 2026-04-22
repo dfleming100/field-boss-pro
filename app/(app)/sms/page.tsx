@@ -71,6 +71,8 @@ export default function SMSCommandCenter() {
   const [isLoading, setIsLoading] = useState(true);
   const [threadStates, setThreadStates] = useState<Record<string, ThreadState>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const tenantId = tenantUser?.tenant_id;
@@ -221,9 +223,24 @@ export default function SMSCommandCenter() {
     };
   }, [tenantId, selectedPhone, fetchConversations, fetchMessages, fetchThreadStates]);
 
+  // Reset auto-scroll intent whenever the user opens a different thread.
   useEffect(() => {
+    shouldAutoScrollRef.current = true;
+  }, [selectedPhone]);
+
+  // Only auto-scroll to the newest message if the user is already near the bottom.
+  // If they've scrolled up to read history, leave their scroll position alone.
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    shouldAutoScrollRef.current = distanceFromBottom < 80;
+  }, []);
 
   const markRead = useCallback(async (phone: string) => {
     if (!tenantId) return;
@@ -529,7 +546,11 @@ export default function SMSCommandCenter() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50">
+              <div
+                ref={messagesContainerRef}
+                onScroll={handleMessagesScroll}
+                className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50"
+              >
                 {messages.map((msg) => {
                   const isOutbound = msg.direction === "outbound";
                   const media = msg.media_urls || [];
