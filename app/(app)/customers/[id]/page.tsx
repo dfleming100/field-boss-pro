@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { useSoftphone } from "@/app/(app)/layout";
+import AddressHistory from "@/app/components/AddressHistory";
 import {
   ArrowLeft,
   User,
@@ -349,6 +350,17 @@ export default function CustomerPage() {
           </div>
         </div>
       </div>
+
+      {!isNew && customer?.service_address && tenantUser?.tenant_id && (
+        <div className="mb-6">
+          <AddressHistory
+            tenantId={Number(tenantUser.tenant_id)}
+            address={customer.service_address}
+            zip={customer.zip}
+            excludeCustomerId={customer.id}
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Work Orders + Appointments */}

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { useSoftphone } from "@/app/(app)/layout";
+import AddressHistory from "@/app/components/AddressHistory";
 import {
   ArrowLeft,
   User,
@@ -567,6 +568,15 @@ export default function WorkOrderDetailPage() {
             {[customer?.city, customer?.state, customer?.zip].filter(Boolean).join(", ")}
           </p>
         </div>
+
+        {customer?.service_address && tenantUser?.tenant_id && workOrder.customer_id && (
+          <AddressHistory
+            tenantId={Number(tenantUser.tenant_id)}
+            address={customer.service_address}
+            zip={customer.zip}
+            excludeCustomerId={workOrder.customer_id}
+          />
+        )}
 
         {/* Contact Info */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
