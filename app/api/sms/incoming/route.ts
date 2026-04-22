@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { sendExpoPush } from "@/lib/expo-push";
 
 /**
  * POST /api/sms/incoming
@@ -88,6 +89,16 @@ export async function POST(request: NextRequest) {
       media_urls: mediaUrls.length ? mediaUrls : null,
       status: "received",
     });
+
+    // ── Push-notify the assigned tech (fire-and-forget) ──
+    // Skip compliance keywords; any real reply notifies the tech.
+    const trimmedUpper = body.trim().toUpperCase();
+    const isComplianceKeyword = ["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "START", "UNSTOP", "HELP", "INFO"].includes(trimmedUpper);
+    if (!isComplianceKeyword) {
+      notifyAssignedTech(sb, tenantId, searchDigits, from, body).catch((e) =>
+        console.error("[SMS] push notify error:", e?.message)
+      );
+    }
 
     // ── STOP / HELP / START keyword handling (compliance) ──
     const trimmed = body.trim().toUpperCase();
@@ -368,6 +379,66 @@ export async function POST(request: NextRequest) {
       { status: 200, headers: { "Content-Type": "text/xml" } }
     );
   }
+}
+
+async function notifyAssignedTech(sb: any, tenantId: number, searchDigits: string, fromPhone: string, body: string) {
+  // Find the customer whose phone matches
+  const { data: customers } = await sb
+    .from("customers")
+    .select("id, customer_name, phone")
+    .eq("tenant_id", tenantId);
+
+  const customer = (customers || []).find((c: any) => {
+    const d = (c.phone || "").replace(/\D/g, "");
+    const normalized = d.length === 11 && d.startsWith("1") ? d.slice(1) : d;
+    return normalized === searchDigits;
+  });
+  if (!customer) return;
+
+  // Find the most recent active WO for that customer
+  const { data: wo } = await sb
+    .from("work_orders")
+    .select("id, work_order_number, assigned_technician_id, appliance_type")
+    .eq("tenant_id", tenantId)
+    .eq("customer_id", customer.id)
+    .not("status", "in", '("Complete","canceled")')
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!wo?.assigned_technician_id) return;
+
+  // Find tenant_users linked to this technician with a push token
+  const { data: users } = await sb
+    .from("tenant_users")
+    .select("push_token")
+    .eq("tenant_id", tenantId)
+    .eq("technician_id", wo.assigned_technician_id)
+    .eq("is_active", true)
+    .not("push_token", "is", null);
+
+  const tokens = (users || []).map((u: any) => u.push_token).filter(Boolean);
+  if (!tokens.length) return;
+
+  const preview = body.length > 140 ? body.slice(0, 137) + "..." : body;
+  const title = customer.customer_name || "New message";
+  const subtitle = wo.work_order_number ? ` · WO ${wo.work_order_number}` : "";
+
+  await sendExpoPush(
+    tokens.map((token: string) => ({
+      to: token,
+      title: `${title}${subtitle}`,
+      body: preview,
+      data: {
+        type: "incoming_sms",
+        customer_id: customer.id,
+        work_order_id: wo.id,
+        phone: fromPhone,
+      },
+      sound: "default",
+      channelId: "sms",
+    }))
+  );
 }
 
 async function sendTwilioSms(sb: any, tenantId: number, toPhone: string, body: string) {
