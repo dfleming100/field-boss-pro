@@ -421,6 +421,8 @@ export default function WorkOrderDetailPage() {
       start_time: startTime,
       end_time: endTime,
       status: "scheduled",
+      created_by_source: "manual_ui",
+      created_by_user_id: tenantUser?.auth_uid || null,
     });
     if (insertError) {
       setError("Appointment failed: " + insertError.message);

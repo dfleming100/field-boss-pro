@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
 
     let args = raw;
     let toolCallId = "";
+    const source = raw.message?.toolCalls ? "vapi_voice" : "sms_agent";
     if (raw.message?.toolCalls?.[0]) {
       const tc = raw.message.toolCalls[0];
       args = tc.function?.arguments || {};
@@ -213,6 +214,7 @@ export async function POST(request: NextRequest) {
         start_time: startTime,
         end_time: endTime,
         status: "scheduled",
+        created_by_source: source,
       })
       .select("id")
       .single();
