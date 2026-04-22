@@ -16,7 +16,9 @@ import {
   ArrowRight,
   Plus,
   Funnel,
+  MapPin,
 } from "lucide-react";
+import TechMap, { TechPin } from "@/app/components/TechMap";
 
 interface Stats {
   totalWorkOrders: number;
@@ -65,6 +67,7 @@ export default function DashboardPage() {
   });
   const [recentWOs, setRecentWOs] = useState<RecentWO[]>([]);
   const [todayAppts, setTodayAppts] = useState<TodayAppt[]>([]);
+  const [techPins, setTechPins] = useState<TechPin[]>([]);
 
   const fetchAll = useCallback(async () => {
     if (!tenantUser) return;
@@ -87,6 +90,14 @@ export default function DashboardPage() {
       supabase.from("work_orders").select("*, customer:customers(customer_name)").eq("tenant_id", tid).order("created_at", { ascending: false }).limit(5),
       supabase.from("appointments").select(`*, technician:technicians!assigned_technician_id(tech_name), work_order:work_orders(work_order_number, customer_id, customer:customers(customer_name))`).eq("tenant_id", tid).eq("appointment_date", today).order("start_time"),
     ]);
+
+    const pinsRes = await supabase
+      .from("technicians")
+      .select("id, tech_name, last_lat, last_lng, last_location_at")
+      .eq("tenant_id", tid)
+      .eq("is_active", true)
+      .not("last_location_at", "is", null);
+    setTechPins((pinsRes.data || []).filter((t: any) => t.last_lat != null && t.last_lng != null) as TechPin[]);
 
     setStats({
       totalWorkOrders: totalWO.count || 0,
@@ -115,6 +126,12 @@ export default function DashboardPage() {
   }, [tenantUser]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  useEffect(() => {
+    if (!tenantUser) return;
+    const id = setInterval(fetchAll, 60_000);
+    return () => clearInterval(id);
+  }, [fetchAll, tenantUser]);
 
   const formatStatus = (s: string) => s;
 
@@ -175,6 +192,25 @@ export default function DashboardPage() {
             </Link>
           );
         })}
+      </div>
+
+      {/* Tech GPS */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-6">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <div className="flex items-center gap-2">
+            <MapPin size={18} className="text-emerald-500" />
+            <h2 className="text-base font-semibold text-gray-900">Techs on the Map</h2>
+            <span className="text-xs text-gray-400">
+              {techPins.length ? `${techPins.length} active` : "no active"}
+            </span>
+          </div>
+          <Link href="/map" className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 font-medium">
+            Full Map <ArrowRight size={12} />
+          </Link>
+        </div>
+        <div className="p-3">
+          <TechMap techs={techPins} apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY} height={280} />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
