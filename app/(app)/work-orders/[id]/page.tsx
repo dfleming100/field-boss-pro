@@ -158,12 +158,13 @@ export default function WorkOrderDetailPage() {
 
   const fetchAppointments = useCallback(async () => {
     if (!tenantUser) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("appointments")
-      .select(`*, technician:technicians!assigned_technician_id(tech_name)`)
+      .select(`*, technician:technicians!technician_id(tech_name)`)
       .eq("tenant_id", tenantUser.tenant_id)
       .eq("work_order_id", workOrderId)
       .order("created_at", { ascending: false });
+    if (error) console.error("fetchAppointments error:", error);
     if (data) setAppointments(data);
   }, [tenantUser, workOrderId]);
 
