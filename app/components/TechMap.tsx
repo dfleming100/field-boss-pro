@@ -18,7 +18,8 @@ interface Props {
 }
 
 const STALE_MINUTES = 15;
-const HIDE_MINUTES = 60;
+const VERY_STALE_MINUTES = 120;
+const HIDE_MINUTES = 1440;
 
 let loadPromise: Promise<void> | null = null;
 
@@ -91,12 +92,13 @@ export default function TechMap({ techs, apiKey, height = 320 }: Props) {
         markersRef.current = [];
 
         visible.forEach((t) => {
-          const stale = minutesSince(t.last_location_at) > STALE_MINUTES;
+          const age = minutesSince(t.last_location_at);
+          const opacity = age > VERY_STALE_MINUTES ? 0.35 : age > STALE_MINUTES ? 0.65 : 1;
           const marker = new google.maps.Marker({
             position: { lat: t.last_lat, lng: t.last_lng },
             map: mapInstance.current,
             title: `${t.tech_name} — ${ageLabel(t.last_location_at)}`,
-            opacity: stale ? 0.5 : 1,
+            opacity,
             label: { text: t.tech_name.charAt(0).toUpperCase(), color: "white", fontWeight: "600" },
           });
           const info = new google.maps.InfoWindow({
