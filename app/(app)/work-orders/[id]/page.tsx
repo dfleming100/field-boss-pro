@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { useSoftphone } from "@/app/(app)/layout";
 import AddressHistory from "@/app/components/AddressHistory";
+import PartsOrdersSection from "@/app/components/PartsOrdersSection";
 import {
   ArrowLeft,
   User,
@@ -1082,35 +1083,15 @@ export default function WorkOrderDetailPage() {
             )}
           </div>
 
-          {/* Items / Parts Table */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Items / Parts</h2>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100">
-                <Plus size={14} />
-                Add Item
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Part / Item</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Qty</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Unit Price</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-sm text-gray-400">
-                      No items added yet. Click &quot;Add Item&quot; to start.
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
+          {/* Parts Orders */}
+          {tenantUser?.tenant_id && workOrder?.id && (
+            <PartsOrdersSection
+              workOrderId={Number(workOrder.id)}
+              tenantId={Number(tenantUser.tenant_id)}
+              workOrderStatus={status}
+              onWorkOrderStatusChange={(newStatus) => setStatus(newStatus)}
+            />
+          )}
         </div>
 
         {/* Right Column - Activity Feed */}
