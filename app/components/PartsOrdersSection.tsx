@@ -45,7 +45,6 @@ interface DraftItem {
 const SUPPLIERS = [
   { value: "marcone", label: "Marcone" },
   { value: "reliable_parts", label: "Reliable Parts" },
-  { value: "amazon", label: "Amazon" },
   { value: "other", label: "Other" },
 ];
 
