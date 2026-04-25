@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
+import { supabase } from "@/lib/supabase";
 import {
   Plus,
   Bell,
@@ -23,6 +24,20 @@ export default function TopNav() {
   const [profileOpen, setProfileOpen] = useState(false);
   const addRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
+  const [tenantName, setTenantName] = useState<string>("");
+
+  useEffect(() => {
+    if (!tenantUser?.tenant_id) {
+      setTenantName("");
+      return;
+    }
+    supabase
+      .from("tenants")
+      .select("name")
+      .eq("id", tenantUser.tenant_id)
+      .maybeSingle()
+      .then(({ data }) => setTenantName(data?.name || ""));
+  }, [tenantUser?.tenant_id]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -62,7 +77,7 @@ export default function TopNav() {
       {/* Left: company / tenant name */}
       <div>
         <h2 className="text-lg font-semibold text-gray-900 truncate">
-          {tenantUser?.tenant_id ? "My Company" : "Field Boss Pro"}
+          {tenantName || (tenantUser?.tenant_id ? "Loading…" : "Field Boss Pro")}
         </h2>
       </div>
 
