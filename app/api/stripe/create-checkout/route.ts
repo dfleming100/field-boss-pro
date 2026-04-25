@@ -21,11 +21,8 @@ export async function POST(request: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3002";
 
-    // Calculate pricing
-    const baseFee = 9900; // $99 in cents
-    const additionalTechs = Math.max(0, (techCount || 0) - 3);
-    const additionalFee = additionalTechs * 5000; // $50 per extra tech in cents
-    const totalAmount = baseFee + additionalFee;
+    // TEMP: $1 test price for live-mode end-to-end verification — revert to 9900 base + 5000/extra-tech before launch
+    const totalAmount = 100;
 
     // Create a Checkout session
     const session = await stripe.checkout.sessions.create({
