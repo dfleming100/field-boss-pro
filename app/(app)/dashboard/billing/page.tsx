@@ -27,6 +27,7 @@ function BillingContent() {
   const [techCount, setTechCount] = useState(0);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSubscribing, setIsSubscribing] = useState(false);
+  const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [connectLive, setConnectLive] = useState<{
     status: string;
     charges_enabled?: boolean;
@@ -112,6 +113,29 @@ function BillingContent() {
       setError((err as Error).message);
     } finally {
       setIsSubscribing(false);
+    }
+  };
+
+  // ── Open Stripe Customer Portal (manage card / cancel / invoices) ──
+  const handleOpenPortal = async () => {
+    setIsOpeningPortal(true);
+    setError("");
+    try {
+      const res = await fetch("/api/stripe/billing-portal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenantUser?.tenant_id }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        setError(data.error || "Failed to open billing portal");
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setIsOpeningPortal(false);
     }
   };
 
@@ -285,20 +309,30 @@ function BillingContent() {
         </div>
 
         {hasSubscription ? (
-          <div className="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-lg">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 size={18} className="text-green-600" />
-              <span className="text-sm font-medium text-green-700">
-                Professional plan active
-              </span>
+          <div>
+            {tenant?.subscription_status === "past_due" || tenant?.subscription_status === "unpaid" ? (
+              <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
+                <AlertCircle size={16} className="text-amber-600" />
+                <span className="text-sm text-amber-700">
+                  Your last payment failed. Update your card in the billing portal to keep service active.
+                </span>
+              </div>
+            ) : null}
+            <div className="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={18} className="text-green-600" />
+                <span className="text-sm font-medium text-green-700">
+                  Professional plan active
+                </span>
+              </div>
+              <button
+                onClick={handleOpenPortal}
+                disabled={isOpeningPortal}
+                className="text-sm text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50"
+              >
+                {isOpeningPortal ? "Opening..." : "Manage Subscription"}
+              </button>
             </div>
-            <button
-              onClick={handleSubscribe}
-              disabled={isSubscribing}
-              className="text-sm text-indigo-600 hover:text-indigo-700 font-medium"
-            >
-              Manage Subscription
-            </button>
           </div>
         ) : (
           <button

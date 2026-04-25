@@ -75,6 +75,8 @@ export async function POST(request: NextRequest) {
               .update({
                 plan: "professional",
                 stripe_subscription_id: String(session.subscription),
+                stripe_customer_id: typeof session.customer === "string" ? session.customer : session.customer?.id ?? null,
+                subscription_status: "active",
               })
               .eq("id", tenantId);
           }
@@ -110,6 +112,10 @@ export async function POST(request: NextRequest) {
 
       case "customer.subscription.updated": {
         const subscription = event.data.object as Stripe.Subscription;
+        await sb
+          .from("tenants")
+          .update({ subscription_status: subscription.status })
+          .eq("stripe_subscription_id", subscription.id);
         if (subscription.status === "past_due" || subscription.status === "unpaid") {
           console.warn("[stripe webhook] subscription past due:", subscription.id);
         }
@@ -125,8 +131,36 @@ export async function POST(request: NextRequest) {
         if (tenants && tenants.length > 0) {
           await sb
             .from("tenants")
-            .update({ plan: "free", stripe_subscription_id: null })
+            .update({
+              plan: "free",
+              stripe_subscription_id: null,
+              subscription_status: "canceled",
+            })
             .eq("id", tenants[0].id);
+        }
+        break;
+      }
+
+      case "invoice.payment_failed": {
+        const invoice = event.data.object as Stripe.Invoice;
+        const subId = typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id;
+        if (subId) {
+          await sb
+            .from("tenants")
+            .update({ subscription_status: "past_due" })
+            .eq("stripe_subscription_id", subId);
+        }
+        break;
+      }
+
+      case "invoice.payment_succeeded": {
+        const invoice = event.data.object as Stripe.Invoice;
+        const subId = typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id;
+        if (subId) {
+          await sb
+            .from("tenants")
+            .update({ subscription_status: "active" })
+            .eq("stripe_subscription_id", subId);
         }
         break;
       }
