@@ -19,23 +19,30 @@ export async function POST(request: NextRequest) {
 
     const sb = supabaseAdmin();
 
-    const { data: admin } = await sb
+    const { data: admins } = await sb
       .from("tenant_users")
       .select("user_email")
       .eq("tenant_id", tenantId)
       .eq("role", "admin")
-      .eq("is_active", true)
-      .limit(1)
-      .maybeSingle();
+      .eq("is_active", true);
 
-    if (!admin?.user_email) {
-      return NextResponse.json({ error: "No admin user found for tenant" }, { status: 404 });
+    const emails: string[] = (admins || []).map((a: any) => a.user_email).filter(Boolean);
+    if (emails.length === 0) {
+      return NextResponse.json({ error: "No admin users found for tenant" }, { status: 404 });
     }
 
-    const customers = await stripe.customers.list({ email: admin.user_email, limit: 10 });
-    if (customers.data.length === 0) {
-      return NextResponse.json({ error: `No Stripe customer found for ${admin.user_email}` }, { status: 404 });
+    const allCustomers: Stripe.Customer[] = [];
+    for (const email of emails) {
+      const list = await stripe.customers.list({ email, limit: 10 });
+      allCustomers.push(...list.data);
     }
+    if (allCustomers.length === 0) {
+      return NextResponse.json(
+        { error: `No Stripe customer found for any admin email: ${emails.join(", ")}` },
+        { status: 404 }
+      );
+    }
+    const customers = { data: allCustomers };
 
     let chosenCustomer: Stripe.Customer | null = null;
     let chosenSub: Stripe.Subscription | null = null;
