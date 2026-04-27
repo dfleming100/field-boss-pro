@@ -4,11 +4,16 @@ import { supabaseAdmin } from "@/lib/supabase";
 /**
  * POST /api/invoices/send
  * Sends invoice to customer via SMS and/or email.
- * Body: { invoice_id, method: "sms" | "email" | "both" }
+ * Body: { invoice_id, method: "sms" | "email" | "both", to_email?, to_phone? }
+ *   - to_email / to_phone override the customer record (used when the customer
+ *     has no contact on file and the tech types one in at the terminal)
  */
 export async function POST(request: NextRequest) {
   try {
-    const { invoice_id, method } = await request.json();
+    const body = await request.json();
+    const { invoice_id, to_email, to_phone } = body;
+    // Accept both "method" (canonical) and "channel" (legacy from older mobile clients)
+    const method: string = body.method || body.channel;
     const sb = supabaseAdmin();
 
     const { data: invoice } = await sb
@@ -35,8 +40,11 @@ export async function POST(request: NextRequest) {
 
     const results: any = { sms: false, email: false };
 
+    const smsTarget: string | undefined = to_phone || customer?.phone;
+    const emailTarget: string | undefined = to_email || customer?.email;
+
     // Send SMS
-    if ((method === "sms" || method === "both") && customer?.phone) {
+    if ((method === "sms" || method === "both") && smsTarget) {
       const { data: integration } = await sb
         .from("tenant_integrations")
         .select("encrypted_keys")
@@ -47,7 +55,7 @@ export async function POST(request: NextRequest) {
 
       if (integration) {
         const creds = integration.encrypted_keys as any;
-        const phoneDigits = customer.phone.replace(/\D/g, "");
+        const phoneDigits = smsTarget.replace(/\D/g, "");
         const toPhone = phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
         const basicAuth = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString("base64");
 
@@ -77,7 +85,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Send Email (using Resend or similar — for now, log it)
-    if ((method === "email" || method === "both") && customer?.email) {
+    if ((method === "email" || method === "both") && emailTarget) {
       // Check if we have an email provider configured
       // For now, we'll use a simple approach — this can be upgraded to Resend/SendGrid later
       try {
@@ -89,7 +97,7 @@ export async function POST(request: NextRequest) {
           },
           body: JSON.stringify({
             from: `${tenantName} <noreply@fieldbosspro.com>`,
-            to: customer.email,
+            to: emailTarget,
             subject: `Invoice ${invoice.invoice_number} — ${total}`,
             html: `
               <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
