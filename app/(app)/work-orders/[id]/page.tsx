@@ -27,6 +27,7 @@ import {
   Camera,
   X,
   Trash2,
+  Pencil,
 } from "lucide-react";
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
@@ -79,6 +80,8 @@ export default function WorkOrderDetailPage() {
   const [technicians, setTechnicians] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
   const [photos, setPhotos] = useState<any[]>([]);
+  const [viewerPhoto, setViewerPhoto] = useState<string | null>(null);
+  const [invoices, setInvoices] = useState<any[]>([]);
 
   // Form state
   const [status, setStatus] = useState("New");
@@ -87,6 +90,14 @@ export default function WorkOrderDetailPage() {
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("11:00");
   const [notes, setNotes] = useState("");
+  const [jobType, setJobType] = useState("Diagnosis");
+  const [apptModalOpen, setApptModalOpen] = useState(false);
+  const [editingAppt, setEditingAppt] = useState<any | null>(null);
+  const [modalTech, setModalTech] = useState("");
+  const [modalDate, setModalDate] = useState("");
+  const [modalStart, setModalStart] = useState("09:00");
+  const [modalEnd, setModalEnd] = useState("11:00");
+  const [modalSaving, setModalSaving] = useState(false);
 
   // Appliance details (stored in appliance_details table)
   const [appliances, setAppliances] = useState<ApplianceDetail[]>([]);
@@ -116,6 +127,7 @@ export default function WorkOrderDetailPage() {
       setAssignedTechId(data.assigned_technician_id || "");
       setServiceDate(data.service_date || "");
       setNotes(data.notes || "");
+      setJobType(data.job_type || "Diagnosis");
 
       // Parse activity notes from description (JSON)
       if (data.description) {
@@ -180,12 +192,24 @@ export default function WorkOrderDetailPage() {
     if (data) setAppointments(data);
   }, [tenantUser, workOrderId]);
 
+  const fetchInvoices = useCallback(async () => {
+    if (!tenantUser || !workOrderId) return;
+    const { data } = await supabase
+      .from("invoices")
+      .select("id, invoice_number, status, total, amount_paid, paid_at, created_at")
+      .eq("tenant_id", tenantUser.tenant_id)
+      .eq("work_order_id", workOrderId)
+      .order("created_at", { ascending: false });
+    if (data) setInvoices(data);
+  }, [tenantUser, workOrderId]);
+
   useEffect(() => {
     fetchWorkOrder();
     fetchTechs();
     fetchAppointments();
     fetchPhotos();
-  }, [fetchWorkOrder, fetchTechs, fetchAppointments, fetchPhotos]);
+    fetchInvoices();
+  }, [fetchWorkOrder, fetchTechs, fetchAppointments, fetchPhotos, fetchInvoices]);
 
   const handleSave = async () => {
     setError("");
@@ -227,16 +251,12 @@ export default function WorkOrderDetailPage() {
         await supabase.from("work_orders").update({ appliance_type: applianceTypeList }).eq("id", workOrderId);
       }
 
-      // Auto-set job type based on status
-      let autoJobType = workOrder?.job_type;
-      if (status === "New") autoJobType = "Diagnosis";
-      if (status === "Parts Have Arrived") autoJobType = "Repair Follow-up";
-
+      // job_type is now editable + auto-flipped by DB trigger when status → "Parts Have Arrived"
       const { error: updateError } = await supabase
         .from("work_orders")
         .update({
           status,
-          job_type: autoJobType,
+          job_type: jobType,
           assigned_technician_id: assignedTechId || null,
           service_date: serviceDate || null,
           notes,
@@ -375,20 +395,103 @@ export default function WorkOrderDetailPage() {
     }
   };
 
+  const openApptModal = (appt?: any) => {
+    if (appt) {
+      setEditingAppt(appt);
+      setModalTech(String(appt.technician_id || ""));
+      setModalDate(appt.appointment_date || "");
+      setModalStart(appt.start_time?.slice(0, 5) || "09:00");
+      setModalEnd(appt.end_time?.slice(0, 5) || "11:00");
+    } else {
+      setEditingAppt(null);
+      setModalTech(assignedTechId || "");
+      setModalDate("");
+      setModalStart("09:00");
+      setModalEnd("11:00");
+    }
+    setApptModalOpen(true);
+  };
+
+  const saveAppointmentModal = async () => {
+    if (!modalDate) {
+      setError("Pick a date");
+      return;
+    }
+    setModalSaving(true);
+    setError("");
+    try {
+      if (editingAppt) {
+        // Update existing appointment in place
+        await supabase
+          .from("appointments")
+          .update({
+            technician_id: modalTech ? Number(modalTech) : null,
+            appointment_date: modalDate,
+            start_time: modalStart,
+            end_time: modalEnd,
+          })
+          .eq("id", editingAppt.id);
+      } else {
+        // Create new — cancel existing FUTURE scheduled appointments only
+        // (don't retroactively cancel past appointments — those should be marked completed)
+        const today = new Date().toISOString().slice(0, 10);
+        const { data: existing } = await supabase
+          .from("appointments")
+          .select("id")
+          .eq("work_order_id", workOrderId)
+          .eq("status", "scheduled")
+          .gte("appointment_date", today);
+        for (const old of existing || []) {
+          await supabase.from("appointments").update({ status: "canceled" }).eq("id", old.id);
+        }
+        await supabase.from("appointments").insert({
+          tenant_id: tenantUser?.tenant_id,
+          work_order_id: workOrderId,
+          technician_id: modalTech ? Number(modalTech) : null,
+          appointment_date: modalDate,
+          start_time: modalStart,
+          end_time: modalEnd,
+          status: "scheduled",
+          created_by_source: "manual_ui",
+          created_by_user_id: tenantUser?.auth_uid || null,
+        });
+      }
+
+      // Keep the WO row in sync with the latest scheduled appointment
+      await supabase
+        .from("work_orders")
+        .update({
+          assigned_technician_id: modalTech ? Number(modalTech) : null,
+          service_date: modalDate,
+        })
+        .eq("id", workOrderId);
+
+      await fetchAppointments();
+      await fetchWorkOrder();
+      setApptModalOpen(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setModalSaving(false);
+    }
+  };
+
   const createAppointment = async () => {
     if (!serviceDate) {
       setError("Set a service date first");
       return;
     }
 
-    // Remove any existing scheduled appointments for this WO so a reschedule
-    // replaces the old one instead of adding a duplicate. Also releases the
-    // capacity held by the old slot.
+    // Cancel only FUTURE existing scheduled appointments (don't retroactively
+    // cancel past ones — those should be marked completed via the WO status
+    // trigger). Also releases capacity for the old future slot.
+    const today = new Date().toISOString().slice(0, 10);
     const { data: existing } = await supabase
       .from("appointments")
       .select("id, appointment_date, technician_id")
       .eq("work_order_id", workOrderId)
-      .eq("status", "scheduled");
+      .eq("status", "scheduled")
+      .gte("appointment_date", today);
 
     for (const old of existing || []) {
       if (old.technician_id) {
@@ -651,9 +754,15 @@ export default function WorkOrderDetailPage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Job Type</label>
-                <p className="px-3 py-2 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-200">
-                  {workOrder.job_type || "—"} <span className="text-gray-400 text-xs">(auto-set by status)</span>
-                </p>
+                <select
+                  value={jobType}
+                  onChange={(e) => setJobType(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="Diagnosis">Diagnosis</option>
+                  <option value="Repair Follow-up">Repair Follow-up</option>
+                  <option value="Recall">Recall</option>
+                </select>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Appliances</label>
@@ -741,7 +850,8 @@ export default function WorkOrderDetailPage() {
                       <img
                         src={photo.file_url}
                         alt={photo.file_name || "Photo"}
-                        className="w-full h-24 object-cover rounded-lg border border-gray-200"
+                        onClick={() => setViewerPhoto(photo.file_url)}
+                        className="w-full h-24 object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90 transition"
                       />
                       <button
                         onClick={async () => {
@@ -759,68 +869,34 @@ export default function WorkOrderDetailPage() {
             </div>
           </div>
 
-          {/* Assign & Schedule */}
+          {/* Appointments — list-based, with Add/Edit modal */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Assign & Schedule</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Assigned Technician</label>
-                <select
-                  value={assignedTechId}
-                  onChange={(e) => setAssignedTechId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-                >
-                  <option value="">Unassigned</option>
-                  {technicians.map((t) => (
-                    <option key={t.id} value={t.id}>{t.tech_name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Service Date</label>
-                <input
-                  type="date"
-                  value={serviceDate}
-                  onChange={(e) => setServiceDate(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Start Time</label>
-                <input
-                  type="time"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">End Time</label>
-                <input
-                  type="time"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
-                />
-              </div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Appointments</h2>
+              <button
+                onClick={() => openApptModal()}
+                className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700"
+              >
+                <CalendarDays size={14} />
+                + Add Appointment
+              </button>
             </div>
 
-            <button
-              onClick={createAppointment}
-              className="mt-4 flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700"
-            >
-              <CalendarDays size={16} />
-              Create Appointment
-            </button>
-
-            {/* Existing Appointments (scheduled + history) */}
-            {appointments.length > 0 && (
-              <div className="mt-4 border-t border-gray-100 pt-4">
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">
-                  Appointment History
-                </h3>
-                <div className="divide-y divide-gray-100 border border-gray-200 rounded-lg">
-                  {appointments.map((appt) => {
+            {appointments.length === 0 ? (
+              <p className="text-sm text-gray-500">No appointments yet for this work order.</p>
+            ) : (
+              <div className="divide-y divide-gray-100 border border-gray-200 rounded-lg">
+                {(() => {
+                  const today = new Date().toISOString().slice(0, 10);
+                  const sorted = [...appointments].sort((a, b) => {
+                    const aFuture = a.appointment_date >= today && a.status !== "canceled";
+                    const bFuture = b.appointment_date >= today && b.status !== "canceled";
+                    if (aFuture !== bFuture) return aFuture ? -1 : 1;
+                    return aFuture
+                      ? a.appointment_date.localeCompare(b.appointment_date)
+                      : b.appointment_date.localeCompare(a.appointment_date);
+                  });
+                  return sorted.map((appt) => {
                     const isCanceled = appt.status === "canceled";
                     const techName = appt.technician?.tech_name || "Unassigned";
                     const jobType = appt.work_order?.job_type || "Service";
@@ -877,20 +953,29 @@ export default function WorkOrderDetailPage() {
                           </p>
                         </div>
                         {!isCanceled && (
-                          <button
-                            onClick={() =>
-                              cancelAppointment(appt.id, appt.appointment_date, appt.technician_id)
-                            }
-                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition"
-                            title="Cancel appointment"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => openApptModal(appt)}
+                              className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"
+                              title="Edit appointment"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              onClick={() =>
+                                cancelAppointment(appt.id, appt.appointment_date, appt.technician_id)
+                              }
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                              title="Cancel appointment"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         )}
                       </div>
                     );
-                  })}
-                </div>
+                  });
+                })()}
               </div>
             )}
           </div>
@@ -1092,6 +1177,54 @@ export default function WorkOrderDetailPage() {
               onWorkOrderStatusChange={(newStatus) => setStatus(newStatus)}
             />
           )}
+
+          {/* Invoices */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <FileText size={18} className="text-gray-400" />
+                <h2 className="text-lg font-semibold text-gray-900">Invoices</h2>
+              </div>
+              <Link
+                href={`/invoices/new?wo=${workOrderId}`}
+                className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+              >
+                + New invoice
+              </Link>
+            </div>
+            {invoices.length === 0 ? (
+              <p className="text-sm text-gray-500">No invoices yet for this work order.</p>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {invoices.map((inv) => {
+                  const isPaid = inv.status === "paid";
+                  return (
+                    <Link
+                      key={inv.id}
+                      href={`/invoices/${inv.id}`}
+                      className="flex items-center justify-between py-3 hover:bg-gray-50 px-2 -mx-2 rounded"
+                    >
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">{inv.invoice_number}</p>
+                        <p className="text-xs text-gray-500">
+                          {new Date(inv.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          {inv.paid_at && ` · Paid ${new Date(inv.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${isPaid ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-800"}`}>
+                          {isPaid ? "PAID" : (inv.status || "draft").toUpperCase()}
+                        </span>
+                        <span className="text-sm font-bold text-gray-900">
+                          ${Number(inv.total).toFixed(2)}
+                        </span>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right Column - Activity Feed */}
@@ -1180,6 +1313,95 @@ export default function WorkOrderDetailPage() {
           </div>
         </div>
       </div>
+
+      {apptModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">
+                {editingAppt ? "Edit Appointment" : "Add Appointment"}
+              </h2>
+              <button
+                onClick={() => setApptModalOpen(false)}
+                className="p-1 hover:bg-gray-100 rounded"
+              >
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Technician</label>
+                <select
+                  value={modalTech}
+                  onChange={(e) => setModalTech(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                >
+                  <option value="">Unassigned</option>
+                  {technicians.map((t) => (
+                    <option key={t.id} value={t.id}>{t.tech_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Date</label>
+                <input
+                  type="date"
+                  value={modalDate}
+                  onChange={(e) => setModalDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Start Time</label>
+                  <input
+                    type="time"
+                    value={modalStart}
+                    onChange={(e) => setModalStart(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">End Time</label>
+                  <input
+                    type="time"
+                    value={modalEnd}
+                    onChange={(e) => setModalEnd(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="p-5 border-t border-gray-200 flex justify-end gap-2">
+              <button
+                onClick={() => setApptModalOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveAppointmentModal}
+                disabled={modalSaving}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {modalSaving ? "Saving..." : editingAppt ? "Save Changes" : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewerPhoto && (
+        <div
+          onClick={() => setViewerPhoto(null)}
+          className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-6 cursor-pointer"
+        >
+          <img src={viewerPhoto} alt="" className="max-w-full max-h-full object-contain" />
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/60 text-sm">
+            Click anywhere to close
+          </div>
+        </div>
+      )}
     </div>
   );
 }
