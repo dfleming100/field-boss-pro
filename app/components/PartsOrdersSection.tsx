@@ -762,7 +762,6 @@ function NewOrderModal({
 function SearchResultCard({ part, onAdd }: { part: MarconePartResult; onAdd: () => void }) {
   const stocked = (part.inventory || []).filter((w) => (w.quantityAvailable || 0) > 0);
   const totalQty = part.totalWarehouseQty ?? stocked.reduce((s, w) => s + (w.quantityAvailable || 0), 0);
-  const closestWarehouse = stocked[0];
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-3">
@@ -781,9 +780,17 @@ function SearchResultCard({ part, onAdd }: { part: MarconePartResult; onAdd: () 
             {part.dealer != null && <span>Cost <strong className="text-gray-900">${part.dealer.toFixed(2)}</strong></span>}
             {part.list != null && part.list > 0 && <span>List ${part.list.toFixed(2)}</span>}
             <span>{totalQty > 0 ? `${totalQty} in stock` : "Out of stock"}</span>
-            {closestWarehouse && <span className="text-blue-700">{closestWarehouse.warehouseName}</span>}
             {part.weight != null && part.weight > 0 && <span>{part.weight} lb</span>}
           </div>
+          {stocked.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {stocked.map((w) => (
+                <span key={w.warehouseNumber} className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">
+                  {w.warehouseName} · {w.quantityAvailable}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <button
           onClick={onAdd}
