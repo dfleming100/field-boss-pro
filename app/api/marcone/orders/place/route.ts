@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
         items:parts_order_items(*),
         work_order:work_orders(
           id, work_order_number,
-          customer:customers(customer_name, service_address, address_line_2, city, state, zip)
+          customer:customers(customer_name, service_address, city, state, zip)
         )
       `)
       .eq("id", parts_order_id)
@@ -62,7 +62,6 @@ export async function POST(request: NextRequest) {
       shipTo: {
         name: customer.customer_name,
         address1: customer.service_address,
-        address2: customer.address_line_2 || undefined,
         city: customer.city,
         state: customer.state,
         zip: customer.zip,
