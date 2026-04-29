@@ -22,10 +22,8 @@ export async function POST(request: NextRequest) {
       .select(`
         *,
         items:parts_order_items(*),
-        work_order:work_orders(
-          id, work_order_number,
-          customer:customers(customer_name, service_address, city, state, zip)
-        )
+        work_order:work_orders(id, work_order_number),
+        tenant:tenants(name, shop_address, shop_city, shop_state, shop_zip, contact_phone)
       `)
       .eq("id", parts_order_id)
       .single();
@@ -34,10 +32,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: orderErr?.message || "Order not found" }, { status: 404 });
     }
 
-    const customer = (order as any).work_order?.customer;
-    if (!customer?.service_address) {
+    const tenant = (order as any).tenant;
+    if (!tenant?.shop_address || !tenant?.shop_zip) {
       return NextResponse.json(
-        { ok: false, error: "Customer address missing — can't generate ship-to" },
+        { ok: false, error: "Tenant shop address missing — set it on the Tenants table before placing orders" },
         { status: 400 }
       );
     }
@@ -60,11 +58,11 @@ export async function POST(request: NextRequest) {
       warehouseNumber: order.marcone_warehouse_number || undefined,
       shippingMethod: order.marcone_shipping_method || undefined,
       shipTo: {
-        name: customer.customer_name,
-        address1: customer.service_address,
-        city: customer.city,
-        state: customer.state,
-        zip: customer.zip,
+        name: tenant.name,
+        address1: tenant.shop_address,
+        city: tenant.shop_city,
+        state: tenant.shop_state,
+        zip: tenant.shop_zip,
       },
       purchaseOrderItems,
       internalNotes: order.notes || undefined,

@@ -65,10 +65,6 @@ interface DraftItem {
   unit_price: string;
 }
 
-// Fleming Appliance's home Marcone branch. Prefer this warehouse when the part
-// has stock locally — minimizes shipping time. TODO: tenant-config.
-const HOME_MARCONE_BRANCH = "601"; // DENTON
-
 const SUPPLIERS = [
   { value: "marcone", label: "Marcone" },
   { value: "reliable_parts", label: "Reliable Parts" },
@@ -397,11 +393,10 @@ function NewOrderModal({
   };
 
   const addFromSearch = (part: MarconePartResult) => {
-    const stocked = (part.inventory || [])
-      .filter((w) => (w.quantityAvailable || 0) > 0);
-    // Prefer the home branch (Denton). Fall back to highest-qty if not stocked locally.
-    const home = stocked.find((w) => w.warehouseNumber === HOME_MARCONE_BRANCH);
-    const warehouse = home || [...stocked].sort((a, b) => (b.quantityAvailable || 0) - (a.quantityAvailable || 0))[0];
+    // With ByZipCode lookup, Marcone returns warehouses already sorted by
+    // transit time to our shop ZIP — first stocked entry is the closest.
+    const stocked = (part.inventory || []).filter((w) => (w.quantityAvailable || 0) > 0);
+    const warehouse = stocked[0];
 
     setItems((prev) => [
       ...prev,

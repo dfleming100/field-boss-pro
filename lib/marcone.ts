@@ -111,13 +111,18 @@ export interface PartLookupResponse {
 
 export async function lookupPart(params: PartLookupParams): Promise<PartLookupResponse> {
   const customerNumber = getMarconeCustomerNumber();
+  // When a ship-to ZIP is provided, use ByZipCode so Marcone returns warehouses
+  // sorted by transit time to that ZIP — closest-with-stock comes first.
+  const lookupType =
+    params.lookupType ||
+    (params.tntShipToZip ? "ByZipCode" : params.branchNumber ? "ByBranch" : "Default");
   const body = {
     custNo: customerNumber ? Number(customerNumber) : undefined,
     make: params.make,
     partNumber: params.partNumber,
     branchNumber: params.branchNumber,
     tntShipToZip: params.tntShipToZip,
-    lookupType: params.lookupType || "Default",
+    lookupType,
   };
   return marconeFetch<PartLookupResponse>("parts/lookup", {
     method: "POST",

@@ -1,13 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { lookupPart } from "@/lib/marcone";
+import { supabaseAdmin } from "@/lib/supabase";
 
 // GET /api/marcone/parts/search?part_number=W10130913&make=Whirlpool
+//   Optional: tenant_id (defaults to first/only tenant) — used to pull shop ZIP
+//   for distance-sorted warehouse results.
 export async function GET(request: NextRequest) {
   try {
     const url = new URL(request.url);
     const partNumber = url.searchParams.get("part_number")?.trim();
     const make = url.searchParams.get("make")?.trim() || undefined;
-    const tntShipToZip = url.searchParams.get("zip")?.trim() || undefined;
+    let tntShipToZip = url.searchParams.get("zip")?.trim() || undefined;
+    const tenantId = url.searchParams.get("tenant_id");
+
+    // If caller didn't pass a ZIP, pull it from the tenant's shop address.
+    if (!tntShipToZip) {
+      const sb = supabaseAdmin();
+      const q = sb.from("tenants").select("shop_zip").limit(1);
+      if (tenantId) q.eq("id", tenantId);
+      const { data } = await q.single();
+      tntShipToZip = (data as any)?.shop_zip || undefined;
+    }
 
     if (!partNumber) {
       return NextResponse.json(
