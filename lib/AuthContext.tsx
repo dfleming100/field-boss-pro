@@ -13,6 +13,7 @@ interface TenantUser {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  technician_id?: number | null;
   first_name?: string | null;
   last_name?: string | null;
   email?: string;
