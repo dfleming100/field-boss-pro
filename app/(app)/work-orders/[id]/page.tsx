@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
+  "New Hold": { label: "New Hold", bg: "bg-slate-100", text: "text-slate-700", dot: "bg-slate-500" },
   "New": { label: "New", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
   "Parts Needed": { label: "Parts Needed", bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500" },
   "Parts Ordered": { label: "Parts Ordered", bg: "bg-amber-100", text: "text-amber-700", dot: "bg-amber-500" },
@@ -39,7 +40,7 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; d
   "Complete": { label: "Complete", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
 };
 
-const statusOptions = ["New", "Parts Needed", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
+const statusOptions = ["New Hold", "New", "Parts Needed", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
 
 interface ApplianceDetail {
   id: number | string;
@@ -122,6 +123,21 @@ export default function WorkOrderDetailPage() {
         .single();
 
       if (fetchError) throw fetchError;
+
+      // Tech role: allow opening if WO is assigned to them OR they have an appointment on it
+      if (tenantUser.role === "technician" && tenantUser.technician_id && data.assigned_technician_id !== tenantUser.technician_id) {
+        const { data: myAppts } = await supabase
+          .from("appointments")
+          .select("id")
+          .eq("work_order_id", workOrderId)
+          .eq("technician_id", tenantUser.technician_id)
+          .limit(1);
+        if (!myAppts || myAppts.length === 0) {
+          setError("You don't have access to this work order");
+          return;
+        }
+      }
+
       setWorkOrder(data);
       setStatus(data.status || "New");
       setAssignedTechId(data.assigned_technician_id || "");
@@ -762,6 +778,20 @@ export default function WorkOrderDetailPage() {
                   <option value="Diagnosis">Diagnosis</option>
                   <option value="Repair Follow-up">Repair Follow-up</option>
                   <option value="Recall">Recall</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Assigned Technician</label>
+                <select
+                  value={assignedTechId}
+                  onChange={(e) => setAssignedTechId(e.target.value)}
+                  disabled={tenantUser?.role === "technician"}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg disabled:bg-gray-50 disabled:text-gray-500"
+                >
+                  <option value="">Unassigned</option>
+                  {technicians.map((t) => (
+                    <option key={t.id} value={t.id}>{t.tech_name}</option>
+                  ))}
                 </select>
               </div>
               <div>
