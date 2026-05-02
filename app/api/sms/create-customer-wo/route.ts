@@ -45,10 +45,10 @@ export async function POST(request: NextRequest) {
       // but the service address is stable. Mirrors Vapi behavior.
       if (!customerId && service_address) {
         const addrLower = service_address.toLowerCase().trim();
-        const tokens = addrLower.match(/\d+|[a-z]{3,}/g) || [];
-        const streetNum = tokens.find((t) => /^\d+$/.test(t));
+        const tokens: string[] = addrLower.match(/\d+|[a-z]{3,}/g) || [];
+        const streetNum = tokens.find((t: string) => /^\d+$/.test(t));
         const streetWord = tokens.find(
-          (t) => !/^\d+$/.test(t) && !["st","dr","ave","blvd","rd","ln","ct","cir","pkwy","apt","suite","unit"].includes(t)
+          (t: string) => !/^\d+$/.test(t) && !["st","dr","ave","blvd","rd","ln","ct","cir","pkwy","apt","suite","unit"].includes(t)
         );
         if (streetNum && streetWord) {
           const { data: addrMatch } = await sb
