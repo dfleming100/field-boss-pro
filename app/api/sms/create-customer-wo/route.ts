@@ -43,6 +43,11 @@ export async function POST(request: NextRequest) {
       // 2) Fallback to ADDRESS match if phone didn't hit. Customers
       // commonly text from a number not on file (spouse, work phone),
       // but the service address is stable. Mirrors Vapi behavior.
+      //
+      // SAFETY: address match must ALSO have a similar customer name.
+      // Same address + different name = different person (apartment,
+      // duplex, sold home, new tenant), so we create a new customer
+      // instead of merging records together.
       if (!customerId && service_address) {
         const addrLower = service_address.toLowerCase().trim();
         const tokens: string[] = addrLower.match(/\d+|[a-z]{3,}/g) || [];
@@ -51,13 +56,26 @@ export async function POST(request: NextRequest) {
           (t: string) => !/^\d+$/.test(t) && !["st","dr","ave","blvd","rd","ln","ct","cir","pkwy","apt","suite","unit"].includes(t)
         );
         if (streetNum && streetWord) {
-          const { data: addrMatch } = await sb
+          const { data: addrMatches } = await sb
             .from("customers")
-            .select("id, phone, phone2")
+            .select("id, customer_name, phone, phone2")
             .eq("tenant_id", tenant_id || 1)
             .ilike("service_address", `%${streetNum}%${streetWord}%`)
-            .limit(1)
-            .maybeSingle();
+            .limit(10);
+
+          // Name-similarity check: any shared 3+ char word between the
+          // inbound name and the existing customer_name = same person.
+          const nameWords = (customer_name || "")
+            .toLowerCase()
+            .split(/\s+/)
+            .filter((w: string) => w.length >= 3);
+          const addrMatch = (addrMatches || []).find((c: any) => {
+            const existingWords = (c.customer_name || "")
+              .toLowerCase()
+              .split(/\s+/)
+              .filter((w: string) => w.length >= 3);
+            return existingWords.some((w: string) => nameWords.includes(w));
+          });
 
           if (addrMatch) {
             customerId = addrMatch.id;
@@ -78,6 +96,9 @@ export async function POST(request: NextRequest) {
                 .eq("id", customerId);
             }
           }
+          // Otherwise (address match but name mismatch): fall through to
+          // create a new customer. Same-address-different-name is a
+          // legitimate scenario, not a duplicate.
         }
       }
 
