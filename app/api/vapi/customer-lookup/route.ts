@@ -142,15 +142,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Fallback: search by phone (try multiple formats)
+    // Match against BOTH phone and phone2 — many customers text from a
+    // different cell than the landline on file.
     if (!customer && phone.length >= 7) {
       const last7 = phone.slice(-7);
       const last4 = phone.slice(-4);
-      // Try with raw digits
+      // Try with raw digits across both phone columns
       const { data } = await sb
         .from("customers")
         .select("*")
         .eq("tenant_id", tenantId)
-        .or(`phone.ilike.%${last7}%,phone.ilike.%${last4}%`)
+        .or(
+          `phone.ilike.%${last7}%,phone.ilike.%${last4}%,` +
+          `phone2.ilike.%${last7}%,phone2.ilike.%${last4}%`
+        )
         .limit(5);
 
       // If multiple results from last4, try to narrow down
@@ -160,7 +165,13 @@ export async function POST(request: NextRequest) {
         // Check if any phone matches when digits-only compared
         const match = data.find((c: any) => {
           const dbDigits = (c.phone || "").replace(/\D/g, "");
-          return dbDigits.includes(phone.slice(-7)) || phone.includes(dbDigits.slice(-7));
+          const dbDigits2 = (c.phone2 || "").replace(/\D/g, "");
+          return (
+            dbDigits.includes(phone.slice(-7)) ||
+            phone.includes(dbDigits.slice(-7)) ||
+            dbDigits2.includes(phone.slice(-7)) ||
+            phone.includes(dbDigits2.slice(-7))
+          );
         });
         if (match) customer = match;
         else customer = data[0];

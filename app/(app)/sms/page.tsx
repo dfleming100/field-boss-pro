@@ -175,7 +175,7 @@ export default function SMSCommandCenter() {
     const phones = Object.keys(phoneMap);
     const { data: allCustomers } = await supabase
       .from("customers")
-      .select("id, customer_name, phone")
+      .select("id, customer_name, phone, phone2")
       .eq("tenant_id", tenantId);
 
     if (allCustomers) {
@@ -185,8 +185,10 @@ export default function SMSCommandCenter() {
         if (search.length >= 7) {
           const match = allCustomers.find((c: any) => {
             const cDigits = (c.phone || "").replace(/\D/g, "");
-            if (cDigits.length < 7) return false;
-            return cDigits.slice(-7) === search.slice(-7);
+            const cDigits2 = (c.phone2 || "").replace(/\D/g, "");
+            if (cDigits.length >= 7 && cDigits.slice(-7) === search.slice(-7)) return true;
+            if (cDigits2.length >= 7 && cDigits2.slice(-7) === search.slice(-7)) return true;
+            return false;
           });
           if (match) {
             phoneMap[phone].customer_name = match.customer_name;

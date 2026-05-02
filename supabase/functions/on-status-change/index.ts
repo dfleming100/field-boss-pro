@@ -33,6 +33,10 @@ interface StatusChangePayload {
 
 // SMS templates based on status transitions
 const SMS_TEMPLATES: Record<string, (ctx: any) => string> = {
+  // First-contact outreach when admin releases a New Hold WO into New
+  "New": (ctx) =>
+    `Hi ${ctx.first_name}, this is Fleming Appliance Repair. We are ready to schedule your ${ctx.appliance} service (WO #${ctx.wo_number}). Call (855) 269-3196 or reply.`,
+
   // When appointment is booked
   "Scheduled": (ctx) =>
     `Hi ${ctx.first_name}, your ${ctx.appliance} ${ctx.job_type_label} at ${ctx.address} is confirmed for ${ctx.service_date_display} between ${ctx.window}. See you then! - Fleming Appliance`,
@@ -48,6 +52,14 @@ const SMS_TEMPLATES: Record<string, (ctx: any) => string> = {
   // When parts arrive
   "Parts Have Arrived": (ctx) =>
     `Hi ${ctx.first_name}, great news! Your ${ctx.appliance} parts have arrived. Reply or call (855) 269-3196 to schedule your repair. - Fleming Appliance`,
+};
+
+// Statuses for which an SMS only fires on a *specific* transition,
+// not on any arrival into that status. Maps status → allowed previous statuses.
+// "New" is gated so we don't re-blast customers when, e.g., a Scheduled WO is
+// reverted to New after an appointment cancel.
+const TRANSITION_GATES: Record<string, string[]> = {
+  "New": ["New Hold"],
 };
 
 serve(async (req: Request) => {
@@ -67,10 +79,14 @@ serve(async (req: Request) => {
     // Fetch customer details
     const { data: customer } = await supabase
       .from("customers")
-      .select("customer_name, phone, email, service_address, city, state, zip")
+      .select("customer_name, phone, phone2, email, service_address, city, state, zip")
       .eq("id", record.customer_id)
       .single();
 
+    // Prefer phone2 (text-capable line) for SMS, fall back to phone.
+    if (customer) {
+      customer.phone = customer.phone2 || customer.phone;
+    }
     if (!customer || !customer.phone) {
       return new Response(
         JSON.stringify({ skipped: true, reason: "No customer phone" }),
@@ -130,7 +146,13 @@ serve(async (req: Request) => {
     };
 
     // Template lookup — keys now match n8n/Airtable status values directly
-    const template = SMS_TEMPLATES[newStatus] || null;
+    let template = SMS_TEMPLATES[newStatus] || null;
+
+    // Gate transitions: some statuses only fire SMS from specific previous statuses
+    const allowedFrom = TRANSITION_GATES[newStatus];
+    if (template && allowedFrom && !allowedFrom.includes(oldStatus)) {
+      template = null;
+    }
 
     const actions: string[] = [];
 
@@ -178,6 +200,21 @@ serve(async (req: Request) => {
           twilio_message_id: twilioData.sid || null,
           error_message: twilioRes.ok ? null : JSON.stringify(twilioData),
         });
+
+        // For first-contact ("New") releases, mark outreach so the daily cron
+        // skips this WO until the standard 10-hour cooldown elapses.
+        if (twilioRes.ok && newStatus === "New") {
+          const nowIso = new Date().toISOString();
+          await supabase
+            .from("work_orders")
+            .update({
+              outreach_count: 1,
+              first_outreach_date: nowIso,
+              last_outreach_date: nowIso,
+            })
+            .eq("id", record.id)
+            .is("first_outreach_date", null);
+        }
       }
     }
 

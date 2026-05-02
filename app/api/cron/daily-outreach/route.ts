@@ -99,7 +99,7 @@ export async function GET(request: NextRequest) {
       .select(`
         id, tenant_id, work_order_number, status, job_type, appliance_type,
         outreach_count, last_outreach_date, first_outreach_date,
-        customer:customers(customer_name, phone, service_address, city, state, zip)
+        customer:customers(customer_name, phone, phone2, service_address, city, state, zip)
       `)
       .in("status", ["New", "Parts Have Arrived"])
       .order("created_at", { ascending: true })
@@ -126,7 +126,13 @@ export async function GET(request: NextRequest) {
 
     for (const wo of workOrders || []) {
       const customer = wo.customer as any;
-      if (!customer?.phone) continue;
+      // For SMS we prefer phone2 (text-capable line, populated by AHS phones[1]
+      // and FAHW claimantTextPhoneNum) and fall back to phone. Mutate the
+      // customer object so the rest of this loop transparently uses the SMS
+      // number wherever it reads customer.phone.
+      const smsPhone = customer?.phone2 || customer?.phone;
+      if (!smsPhone) continue;
+      customer.phone = smsPhone;
 
       // Stop after 5 days from first outreach
       if (wo.first_outreach_date && new Date(wo.first_outreach_date) < new Date(fiveDaysAgo)) {
