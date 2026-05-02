@@ -8,8 +8,15 @@ import { supabaseAdmin } from "@/lib/supabase";
  */
 export async function POST(request: NextRequest) {
   try {
-    const { tenant_id, phone, ai_paused, mark_read, assigned_to } = await request.json();
-    if (!tenant_id || !phone) {
+    const body = await request.json();
+    const { phone, ai_paused, mark_read, assigned_to } = body;
+    // tenant_id: coerce to number — DB column is bigint, but the AuthContext
+    // ships it as a string. Sending the string version was causing the
+    // upsert ON CONFLICT lookup to miss the existing row and silently
+    // do nothing, so the AI-pause toggle appeared not to persist.
+    const tenant_id = Number(body.tenant_id);
+
+    if (!tenant_id || Number.isNaN(tenant_id) || !phone) {
       return NextResponse.json({ error: "tenant_id and phone required" }, { status: 400 });
     }
 
