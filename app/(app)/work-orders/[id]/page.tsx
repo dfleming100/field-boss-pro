@@ -615,6 +615,16 @@ export default function WorkOrderDetailPage() {
                   {workOrder.warranty_links.provider}
                 </span>
               )}
+              {tenantUser?.role === "technician" &&
+                tenantUser?.technician_id &&
+                String(workOrder.assigned_technician_id) !== String(tenantUser.technician_id) && (
+                  <span
+                    title="You have an appointment on this work order but it is assigned to another technician"
+                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold tracking-wide bg-amber-100 text-amber-700"
+                  >
+                    VISITING
+                  </span>
+                )}
               <span
                 className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold ${statusCfg.bg} ${statusCfg.text}`}
               >

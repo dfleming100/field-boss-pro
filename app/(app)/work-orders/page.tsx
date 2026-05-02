@@ -512,6 +512,16 @@ function WorkOrdersContent() {
                             {WARRANTY_BADGE[wo.warranty_provider].label}
                           </span>
                         )}
+                        {tenantUser?.role === "technician" &&
+                          tenantUser?.technician_id &&
+                          String(wo.assigned_technician_id) !== String(tenantUser.technician_id) && (
+                            <span
+                              title="You have an appointment on this work order but it is assigned to another technician"
+                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide bg-amber-100 text-amber-700"
+                            >
+                              VISITING
+                            </span>
+                          )}
                       </div>
                     </td>
                     <td className="px-4 py-3">
