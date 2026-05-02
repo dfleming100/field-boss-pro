@@ -6,7 +6,11 @@ import { supabase } from "@/lib/supabase";
 
 interface TenantUser {
   id: string;
-  tenant_id: string;
+  // bigint in DB; was wrongly typed as string and silently broke upserts
+  // with composite primary keys (tenant_id, ...) when the JSON-stringified
+  // value missed the bigint conflict-key lookup. Source of truth is the
+  // number coming back from Supabase.
+  tenant_id: number;
   auth_uid: string;
   user_email: string;
   role: "admin" | "manager" | "dispatcher" | "technician";

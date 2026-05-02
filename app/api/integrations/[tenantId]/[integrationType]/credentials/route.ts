@@ -121,7 +121,7 @@ export async function POST(
       .from('tenant_integrations')
       .upsert(
         {
-          tenant_id: tenantId,
+          tenant_id: Number(tenantId),
           integration_type: integrationType,
           encrypted_keys: JSON.stringify(encryptedKeys),
           encryption_key: encryptionKey,
