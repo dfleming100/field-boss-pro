@@ -512,7 +512,7 @@ async function classifyIntent(
   conversationThread?: string,
   servicedAppliances?: string,
   tenantInfo?: { name: string; phone: string }
-): Promise<{ action: string; reply: string; chosen_date?: string; tech_id?: string; customer_name?: string; service_address?: string; city?: string; state?: string; zip?: string; appliance_type?: string }> {
+): Promise<{ action: string; reply: string; chosen_date?: string; tech_id?: string; customer_name?: string; service_address?: string; city?: string; state?: string; zip?: string; appliance_type?: string; contact_name?: string; contact_phone?: string; relationship?: string }> {
   const companyName = tenantInfo?.name || "our company";
   const companyPhone = tenantInfo?.phone || "the office";
 
