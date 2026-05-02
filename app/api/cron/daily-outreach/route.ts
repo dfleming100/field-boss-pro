@@ -150,12 +150,18 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Skip if WO already has a scheduled appointment
+      // Skip if WO has a FUTURE scheduled appointment. Past appointments
+      // that were never marked complete/canceled used to block outreach
+      // forever — David Mata stopped getting outreach for a week because
+      // his 4/27 appointment was left in 'scheduled' status after the date
+      // had passed.
+      const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
       const { count } = await sb
         .from("appointments")
         .select("id", { count: "exact", head: true })
         .eq("work_order_id", wo.id)
-        .eq("status", "scheduled");
+        .eq("status", "scheduled")
+        .gte("appointment_date", todayStr);
 
       if ((count || 0) > 0) continue;
 
