@@ -25,14 +25,14 @@ export async function POST(request: NextRequest) {
 
     // Create customer if no existing ID
     if (!customerId && customer_name) {
-      // Check if customer already exists by phone
+      // 1) Try to match by phone (existing behavior)
       const phoneDigits = (phone || "").replace(/\D/g, "");
       if (phoneDigits.length >= 7) {
         const { data: existing } = await sb
           .from("customers")
           .select("id")
           .eq("tenant_id", tenant_id || 1)
-          .ilike("phone", `%${phoneDigits.slice(-7)}%`)
+          .or(`phone.ilike.%${phoneDigits.slice(-7)}%,phone2.ilike.%${phoneDigits.slice(-7)}%`)
           .limit(1);
 
         if (existing && existing.length > 0) {
@@ -40,6 +40,48 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // 2) Fallback to ADDRESS match if phone didn't hit. Customers
+      // commonly text from a number not on file (spouse, work phone),
+      // but the service address is stable. Mirrors Vapi behavior.
+      if (!customerId && service_address) {
+        const addrLower = service_address.toLowerCase().trim();
+        const tokens = addrLower.match(/\d+|[a-z]{3,}/g) || [];
+        const streetNum = tokens.find((t) => /^\d+$/.test(t));
+        const streetWord = tokens.find(
+          (t) => !/^\d+$/.test(t) && !["st","dr","ave","blvd","rd","ln","ct","cir","pkwy","apt","suite","unit"].includes(t)
+        );
+        if (streetNum && streetWord) {
+          const { data: addrMatch } = await sb
+            .from("customers")
+            .select("id, phone, phone2")
+            .eq("tenant_id", tenant_id || 1)
+            .ilike("service_address", `%${streetNum}%${streetWord}%`)
+            .limit(1)
+            .maybeSingle();
+
+          if (addrMatch) {
+            customerId = addrMatch.id;
+            // Save the inbound phone as phone2 if it isn't already on file,
+            // so future texts from this number get recognized immediately.
+            const inboundLast10 = phoneDigits.slice(-10);
+            const onFile1 = (addrMatch.phone || "").replace(/\D/g, "").slice(-10);
+            const onFile2 = (addrMatch.phone2 || "").replace(/\D/g, "").slice(-10);
+            if (
+              inboundLast10.length === 10 &&
+              inboundLast10 !== onFile1 &&
+              inboundLast10 !== onFile2 &&
+              !addrMatch.phone2
+            ) {
+              await sb
+                .from("customers")
+                .update({ phone2: phone })
+                .eq("id", customerId);
+            }
+          }
+        }
+      }
+
+      // 3) Still no match → create new customer
       if (!customerId) {
         const { data: newCust, error: custErr } = await sb
           .from("customers")
