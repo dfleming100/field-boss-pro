@@ -42,6 +42,15 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; d
 
 const statusOptions = ["New Hold", "New", "Parts Needed", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
 
+const APPLIANCE_TYPES = [
+  "Refrigerator", "Freezer", "Ice Maker",
+  "Washer", "Dryer",
+  "Dishwasher",
+  "Oven", "Range", "Cooktop", "Microwave", "Range Hood",
+  "Garbage Disposal", "Wine Cooler",
+  "Other",
+];
+
 interface ApplianceDetail {
   id: number | string;
   make: string;
@@ -102,6 +111,10 @@ export default function WorkOrderDetailPage() {
 
   // Appliance details (stored in appliance_details table)
   const [appliances, setAppliances] = useState<ApplianceDetail[]>([]);
+
+  // Appliance type quick-picker modal (works on work_orders.appliance_type directly)
+  const [applianceModalOpen, setApplianceModalOpen] = useState(false);
+  const [applianceModalSelection, setApplianceModalSelection] = useState<string[]>([]);
 
   // Activity feed
   const [activityNotes, setActivityNotes] = useState<ActivityNote[]>([]);
@@ -817,12 +830,26 @@ export default function WorkOrderDetailPage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Appliances</label>
-                <p className="px-3 py-2 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-200">
-                  {appliances.length > 0
-                    ? appliances.map((a) => a.item).filter(Boolean).join(", ") || "—"
-                    : workOrder.appliance_type || "—"}
-                  <span className="text-gray-400 text-xs ml-1">(from details below)</span>
-                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const current = (workOrder.appliance_type || "")
+                      .split(",")
+                      .map((s: string) => s.trim())
+                      .filter(Boolean);
+                    setApplianceModalSelection(current);
+                    setApplianceModalOpen(true);
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-900 bg-white rounded-lg border border-gray-300 hover:border-indigo-400 hover:bg-indigo-50 cursor-pointer flex items-center justify-between"
+                >
+                  <span>
+                    {workOrder.appliance_type ||
+                      (appliances.length > 0
+                        ? appliances.map((a) => a.item).filter(Boolean).join(", ")
+                        : "—")}
+                  </span>
+                  <span className="text-xs text-indigo-600 font-medium ml-2 flex-shrink-0">Edit</span>
+                </button>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Source</label>
@@ -1450,6 +1477,81 @@ export default function WorkOrderDetailPage() {
           <img src={viewerPhoto} alt="" className="max-w-full max-h-full object-contain" />
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/60 text-sm">
             Click anywhere to close
+          </div>
+        </div>
+      )}
+
+      {/* Appliance type quick-picker modal */}
+      {applianceModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setApplianceModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-gray-200">
+              <h3 className="text-base font-semibold text-gray-900">Pick appliances</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                WO {workOrder.work_order_number}
+              </p>
+            </div>
+            <div className="px-3 py-2 overflow-y-auto flex-1">
+              {APPLIANCE_TYPES.map((a) => {
+                const checked = applianceModalSelection.includes(a);
+                return (
+                  <label
+                    key={a}
+                    className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-gray-50 rounded cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        setApplianceModalSelection((prev) =>
+                          prev.includes(a)
+                            ? prev.filter((x) => x !== a)
+                            : [...prev, a]
+                        );
+                      }}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-gray-800">{a}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="px-5 py-3 border-t border-gray-200 flex justify-between items-center">
+              <button
+                type="button"
+                onClick={() => setApplianceModalOpen(false)}
+                className="px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const newType = applianceModalSelection.join(", ");
+                  const { error: updErr } = await supabase
+                    .from("work_orders")
+                    .update({ appliance_type: newType || null })
+                    .eq("id", workOrderId);
+                  if (updErr) {
+                    setError("Failed to save appliance: " + updErr.message);
+                  } else {
+                    setWorkOrder({ ...workOrder, appliance_type: newType });
+                    setSuccessMsg("Appliances saved");
+                    setTimeout(() => setSuccessMsg(""), 2000);
+                    setApplianceModalOpen(false);
+                  }
+                }}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700"
+              >
+                Save
+              </button>
+            </div>
           </div>
         </div>
       )}
