@@ -569,22 +569,20 @@ function SchedulingContent() {
                               }}
                               title={`${appt.work_order?.work_order_number || ""} — ${appt.customer_name || ""}\n${appt.service_address || ""}${appt.city ? ", " + appt.city : ""}\n${formatTime(appt.start_time)}${appt.end_time ? " - " + formatTime(appt.end_time) : ""}`}
                             >
-                              <div className="flex items-center gap-1">
-                                <p className={`${isNarrow ? "text-[10px]" : "text-xs"} font-semibold ${color.text} truncate`}>
-                                  {appt.work_order?.work_order_number || `WO-${appt.work_order_id}`}
-                                </p>
-                                {appt.work_order?.job_type && (
-                                  <span
-                                    className={`text-[9px] font-bold px-1 rounded uppercase tracking-wide ${
-                                      appt.work_order.job_type === "Repair Follow-up"
-                                        ? "bg-teal-100 text-teal-700"
-                                        : "bg-blue-100 text-blue-700"
-                                    }`}
-                                  >
-                                    {appt.work_order.job_type === "Repair Follow-up" ? "Repair" : "Diag"}
-                                  </span>
-                                )}
-                              </div>
+                              {appt.work_order?.job_type && (
+                                <span
+                                  className={`inline-block text-[9px] font-bold px-1 rounded uppercase tracking-wide mb-0.5 ${
+                                    appt.work_order.job_type === "Repair Follow-up"
+                                      ? "bg-teal-100 text-teal-700"
+                                      : "bg-blue-100 text-blue-700"
+                                  }`}
+                                >
+                                  {appt.work_order.job_type === "Repair Follow-up" ? "Repair" : "Diag"}
+                                </span>
+                              )}
+                              <p className={`${isNarrow ? "text-[10px]" : "text-xs"} font-semibold ${color.text} truncate`}>
+                                {appt.work_order?.work_order_number || `WO-${appt.work_order_id}`}
+                              </p>
                               <p className={`${isNarrow ? "text-[10px]" : "text-xs"} font-medium text-gray-900 truncate`}>
                                 {appt.customer_name || "Customer"}
                               </p>
@@ -678,22 +676,20 @@ function SchedulingContent() {
                             }
                             className={`w-full text-left ${color.bg} border ${color.border} rounded-lg p-2 mb-2 hover:shadow-md transition`}
                           >
-                            <div className="flex items-center gap-1">
-                              <p className={`text-[11px] font-bold ${color.text}`}>
-                                {appt.work_order?.work_order_number || "WO"}
-                              </p>
-                              {appt.work_order?.job_type && (
-                                <span
-                                  className={`text-[9px] font-bold px-1 rounded uppercase tracking-wide ${
-                                    appt.work_order.job_type === "Repair Follow-up"
-                                      ? "bg-teal-100 text-teal-700"
-                                      : "bg-blue-100 text-blue-700"
-                                  }`}
-                                >
-                                  {appt.work_order.job_type === "Repair Follow-up" ? "Repair" : "Diag"}
-                                </span>
-                              )}
-                            </div>
+                            {appt.work_order?.job_type && (
+                              <span
+                                className={`inline-block text-[9px] font-bold px-1 rounded uppercase tracking-wide mb-0.5 ${
+                                  appt.work_order.job_type === "Repair Follow-up"
+                                    ? "bg-teal-100 text-teal-700"
+                                    : "bg-blue-100 text-blue-700"
+                                }`}
+                              >
+                                {appt.work_order.job_type === "Repair Follow-up" ? "Repair" : "Diag"}
+                              </span>
+                            )}
+                            <p className={`text-[11px] font-bold ${color.text}`}>
+                              {appt.work_order?.work_order_number || "WO"}
+                            </p>
                             <p className="text-xs font-medium text-gray-900 truncate">
                               {appt.customer_name || "Customer"}
                             </p>
