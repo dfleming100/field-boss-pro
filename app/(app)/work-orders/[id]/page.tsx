@@ -124,13 +124,15 @@ export default function WorkOrderDetailPage() {
 
       if (fetchError) throw fetchError;
 
-      // Tech role: allow opening if WO is assigned to them OR they have an appointment on it
+      // Tech role: allow opening if WO is assigned to them OR they have a
+      // non-canceled appointment on it. Canceled appts shouldn't grant access.
       if (tenantUser.role === "technician" && tenantUser.technician_id && data.assigned_technician_id !== tenantUser.technician_id) {
         const { data: myAppts } = await supabase
           .from("appointments")
           .select("id")
           .eq("work_order_id", workOrderId)
           .eq("technician_id", tenantUser.technician_id)
+          .neq("status", "canceled")
           .limit(1);
         if (!myAppts || myAppts.length === 0) {
           setError("You don't have access to this work order");

@@ -94,14 +94,18 @@ function WorkOrdersContent() {
         )
         .eq("tenant_id", tenantUser.tenant_id);
 
-      // Tech role: WOs assigned to them OR WOs they have appointments on.
+      // Tech role: WOs assigned to them OR WOs they have a non-canceled
+      // appointment on. (Canceled appts shouldn't grant visibility — they're
+      // historical noise, e.g. Tom Nolen had a canceled Jessy appt that was
+      // making the WO show up on Jessy's list.)
       if (tenantUser.role === "technician" && tenantUser.technician_id) {
         const techId = tenantUser.technician_id;
         const { data: apptWos } = await supabase
           .from("appointments")
           .select("work_order_id")
           .eq("tenant_id", tenantUser.tenant_id)
-          .eq("technician_id", techId);
+          .eq("technician_id", techId)
+          .neq("status", "canceled");
         const wosFromAppts = Array.from(new Set((apptWos || []).map((a: any) => a.work_order_id))).filter(Boolean);
         const orParts = [`assigned_technician_id.eq.${techId}`];
         if (wosFromAppts.length > 0) orParts.push(`id.in.(${wosFromAppts.join(",")})`);

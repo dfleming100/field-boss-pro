@@ -93,6 +93,50 @@ export default function SMSCommandCenter() {
   const fetchConversations = useCallback(async () => {
     if (!tenantId) return;
 
+    // Tech role: only show threads for THEIR customers (WOs assigned to them
+    // or with a non-canceled appointment for them) + alt_contacts on those WOs.
+    let allowedPhones: Set<string> | null = null;
+    const isTech = (tenantUser as any)?.role === "technician";
+    const techId = (tenantUser as any)?.technician_id;
+    if (isTech && techId) {
+      const { data: assignedWos } = await supabase
+        .from("work_orders")
+        .select("customer_id, alt_contact_phone")
+        .eq("tenant_id", tenantId)
+        .eq("assigned_technician_id", techId);
+      const { data: apptRows } = await supabase
+        .from("appointments")
+        .select("work_order:work_orders!inner(customer_id, alt_contact_phone)")
+        .eq("tenant_id", tenantId)
+        .eq("technician_id", techId)
+        .neq("status", "canceled");
+      const custIds = new Set<number>();
+      const altPhones = new Set<string>();
+      for (const w of assignedWos || []) {
+        if (w.customer_id) custIds.add(w.customer_id);
+        if (w.alt_contact_phone) altPhones.add(w.alt_contact_phone);
+      }
+      for (const a of (apptRows as any[]) || []) {
+        const wo = Array.isArray(a.work_order) ? a.work_order[0] : a.work_order;
+        if (wo?.customer_id) custIds.add(wo.customer_id);
+        if (wo?.alt_contact_phone) altPhones.add(wo.alt_contact_phone);
+      }
+      const phoneList = new Set<string>(Array.from(altPhones));
+      if (custIds.size > 0) {
+        const { data: custPhones } = await supabase
+          .from("customers")
+          .select("phone, phone2")
+          .eq("tenant_id", tenantId)
+          .in("id", Array.from(custIds));
+        for (const c of custPhones || []) {
+          if (c.phone) phoneList.add((c.phone || "").replace(/\D/g, "").slice(-10));
+          if (c.phone2) phoneList.add((c.phone2 || "").replace(/\D/g, "").slice(-10));
+        }
+        for (const p of altPhones) phoneList.add((p || "").replace(/\D/g, "").slice(-10));
+      }
+      allowedPhones = phoneList;
+    }
+
     const { data } = await supabase
       .from("sms_conversations")
       .select("phone, direction, body, created_at")
@@ -106,6 +150,9 @@ export default function SMSCommandCenter() {
     for (const msg of data) {
       const digits = (msg.phone || "").replace(/\D/g, "");
       if (digits.length < 7) continue;
+
+      // Tech filter: drop threads that don't belong to this tech.
+      if (allowedPhones && !allowedPhones.has(digits.slice(-10))) continue;
 
       const lastRead = threadStates[msg.phone]?.last_read_at;
       if (!phoneMap[msg.phone]) {
@@ -155,7 +202,7 @@ export default function SMSCommandCenter() {
 
     setConversations(sorted);
     setIsLoading(false);
-  }, [tenantId, threadStates]);
+  }, [tenantId, threadStates, tenantUser]);
 
   const fetchMessages = useCallback(async (phone: string) => {
     const { data } = await supabase

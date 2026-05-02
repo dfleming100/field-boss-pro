@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/lib/AuthContext";
 import {
   Home,
   Funnel,
@@ -21,18 +22,25 @@ import {
   ChevronRight,
 } from "lucide-react";
 
-const navItems = [
+interface NavItem {
+  label: string;
+  href: string;
+  icon: React.ElementType;
+  techHidden?: boolean; // hide from technician role
+}
+
+const navItems: NavItem[] = [
   { label: "Home", href: "/dashboard", icon: Home },
-  { label: "Leads", href: "/leads", icon: Funnel },
+  { label: "Leads", href: "/leads", icon: Funnel, techHidden: true },
   { label: "Customers", href: "/customers", icon: Users },
-  { label: "Technicians", href: "/people", icon: Wrench },
+  { label: "Technicians", href: "/people", icon: Wrench, techHidden: true },
   { label: "Work Orders", href: "/work-orders", icon: ClipboardList },
   { label: "SMS Center", href: "/sms", icon: MessageSquare },
-  { label: "Map", href: "/map", icon: MapPin },
+  { label: "Map", href: "/map", icon: MapPin, techHidden: true },
   { label: "Scheduling", href: "/scheduling", icon: CalendarDays },
-  { label: "Invoices", href: "/invoices", icon: FileText },
-  { label: "Payments", href: "/payments", icon: CreditCard },
-  { label: "Reports", href: "/reports", icon: BarChart3 },
+  { label: "Invoices", href: "/invoices", icon: FileText, techHidden: true },
+  { label: "Payments", href: "/payments", icon: CreditCard, techHidden: true },
+  { label: "Reports", href: "/reports", icon: BarChart3, techHidden: true },
 ];
 
 const bottomItems = [
@@ -47,6 +55,9 @@ interface SidebarProps {
 
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const { tenantUser } = useAuth();
+  const isTech = tenantUser?.role === "technician";
+  const visibleNavItems = navItems.filter((item) => !(isTech && item.techHidden));
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";
@@ -116,7 +127,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {/* Main Nav */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        {navItems.map((item) => (
+        {visibleNavItems.map((item) => (
           <NavItem key={item.href} item={item} />
         ))}
       </nav>
