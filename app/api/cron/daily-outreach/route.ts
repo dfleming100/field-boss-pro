@@ -145,6 +145,32 @@ export async function GET(request: NextRequest) {
       // additional entries get the same SMS + Vapi call below.
       customer.phone = phoneDigitsList[0];
 
+      // Skip if data is incomplete — don't outreach to "unknown" customers
+      // or for "unknown" appliances. That's a data-quality stop signal,
+      // not a real customer ready to schedule.
+      const nameLower = (customer.customer_name || "").trim().toLowerCase();
+      const applianceLower = (wo.appliance_type || "").trim().toLowerCase();
+      if (!nameLower || nameLower === "unknown" || nameLower === "test_harness" || nameLower === "test_cap_fill") continue;
+      if (applianceLower === "unknown") continue;
+
+      // Skip if any of this customer's threads have AI paused
+      const { data: pausedThread } = await sb
+        .from("sms_thread_state")
+        .select("phone")
+        .eq("tenant_id", wo.tenant_id)
+        .in("phone", phoneDigitsList.map((d) => d.length === 10 ? `+1${d}` : `+${d}`))
+        .eq("ai_paused", true)
+        .limit(1)
+        .maybeSingle();
+      if (pausedThread) continue;
+
+      // Idempotency guard against Vercel cron double-fires: if this WO was
+      // outreached in the last 30 minutes, skip. Normal cooldown is hours.
+      if (wo.last_outreach_date) {
+        const minsSince = (Date.now() - new Date(wo.last_outreach_date).getTime()) / 60000;
+        if (minsSince < 30) continue;
+      }
+
       // Stop after 5 days from first outreach
       if (wo.first_outreach_date && new Date(wo.first_outreach_date) < new Date(fiveDaysAgo)) {
         continue;
@@ -327,8 +353,14 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Update outreach count
-      await sb.from("work_orders").update({ outreach_count: (wo.outreach_count || 0) + 1 }).eq("id", wo.id);
+      // Update outreach count + last_outreach_date so the 30-min idempotency
+      // guard at the top of the loop knows when we last fired.
+      const nowIso = new Date().toISOString();
+      await sb.from("work_orders").update({
+        outreach_count: (wo.outreach_count || 0) + 1,
+        last_outreach_date: nowIso,
+        first_outreach_date: wo.first_outreach_date || nowIso,
+      }).eq("id", wo.id);
 
       results.push(result);
     }
