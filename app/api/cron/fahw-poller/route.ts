@@ -174,6 +174,11 @@ async function handleNewAssignment(
   // Parse customer info
   const custName = woDetail.claimantName || "";
   const custPhone = woDetail.claimantPhone || woDetail.claimantTextPhoneNum || "";
+  // FAHW often sends both a landline (claimantPhone) and cell/text-capable
+  // line (claimantTextPhoneNum). Keep both — useful for the alt_contact
+  // and outreach flows.
+  const fahwTextPhone = woDetail.claimantTextPhoneNum || "";
+  const custPhone2 = (fahwTextPhone && fahwTextPhone !== custPhone) ? fahwTextPhone : "";
   const custEmail = woDetail.claimantEmail || "";
   const custAddress = woDetail.address || "";
   const custCity = woDetail.city || "";
@@ -211,6 +216,7 @@ async function handleNewAssignment(
         tenant_id: tenantId,
         customer_name: custName,
         phone: custPhone || null,
+        phone2: custPhone2 || null,
         email: custEmail || null,
         service_address: custAddress || null,
         city: custCity || null,
@@ -240,10 +246,11 @@ async function handleNewAssignment(
   if (woDetail.priority === "Expedited") descParts.push("EXPEDITED");
 
   // Determine job type
+  // Continuation = different company couldn't fix it, transferred to us → it's a NEW first visit (Diagnosis) for us
+  // Recall = customer reports same issue after we already worked on it → tracked separately
   let jobType = "Diagnosis";
   const woType = (woDetail.workOrderType || "").toLowerCase();
   if (woType.includes("recall")) jobType = "Recall";
-  else if (woType.includes("continuation") || woType.includes("completion")) jobType = "Repair Follow-up";
 
   // Map FAHW status to Field Boss status
   const fbStatus = mapFahwStatusToFieldBoss(woDetail.lastAction || "", woDetail.subStatus);

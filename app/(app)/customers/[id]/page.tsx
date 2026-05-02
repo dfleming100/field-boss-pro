@@ -25,6 +25,7 @@ interface CustomerData {
   id: string;
   customer_name: string;
   phone: string;
+  phone2: string;
   email: string;
   service_address: string;
   city: string;
@@ -78,7 +79,7 @@ export default function CustomerPage() {
   const [isEditing, setIsEditing] = useState(isNew);
 
   const [form, setForm] = useState({
-    customer_name: "", phone: "", email: "",
+    customer_name: "", phone: "", phone2: "", email: "",
     service_address: "", city: "", state: "", zip: "",
   });
 
@@ -96,6 +97,7 @@ export default function CustomerPage() {
       setForm({
         customer_name: data.customer_name || "",
         phone: data.phone || "",
+        phone2: data.phone2 || "",
         email: data.email || "",
         service_address: data.service_address || "",
         city: data.city || "",
@@ -225,9 +227,13 @@ export default function CustomerPage() {
               <input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="(555) 123-4567" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="john@example.com" />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone 2 (text)</label>
+              <input type="tel" value={form.phone2} onChange={(e) => setForm({ ...form, phone2: e.target.value })} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="(555) 123-4567" />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="john@example.com" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
@@ -454,6 +460,10 @@ export default function CustomerPage() {
                   <input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
                 </div>
                 <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Phone 2 (text)</label>
+                  <input type="tel" value={form.phone2} onChange={(e) => setForm({ ...form, phone2: e.target.value })} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+                </div>
+                <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Email</label>
                   <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
                 </div>
@@ -484,6 +494,10 @@ export default function CustomerPage() {
                 <div>
                   <p className="text-xs text-gray-400">Phone</p>
                   <p className="text-gray-900">{customer?.phone || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">Phone 2 (text)</p>
+                  <p className="text-gray-900">{customer?.phone2 || "—"}</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-400">Email</p>

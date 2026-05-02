@@ -233,6 +233,7 @@ async function handleSchedule(sb: any, tenantId: number, externalOrg: string, op
   const custInfo = customers[0] || {};
   const custAddress = custInfo.address || {};
   const custPhone = custInfo.phone?.[0]?.number || "";
+  const custPhone2 = custInfo.phone?.[1]?.number || "";
   const custName = custInfo.name || "";
   const custEmail = custInfo.email || "";
 
@@ -276,6 +277,7 @@ async function handleSchedule(sb: any, tenantId: number, externalOrg: string, op
         tenant_id: tenantId,
         customer_name: custName,
         phone: custPhone || null,
+        phone2: custPhone2 || null,
         email: custEmail || null,
         service_address: fullAddress || null,
         city: custAddress.city || null,
@@ -316,9 +318,10 @@ async function handleSchedule(sb: any, tenantId: number, externalOrg: string, op
   }
 
   // Determine job type from dispatch type
+  // Continuation / Vendor Transfer = transferred to us = NEW first visit (Diagnosis)
+  // Recall = follow-up to our prior work, tracked separately
   let jobType = "Diagnosis";
   if (dispatch.dispatchType === "Recall") jobType = "Recall";
-  else if (dispatch.dispatchType === "Continuation") jobType = "Repair Follow-up";
 
   // Parse coverage notes and payment info
   const allCoverageNotes = (coverage.notes || []).join("\n");
