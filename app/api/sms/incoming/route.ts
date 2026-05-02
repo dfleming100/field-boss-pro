@@ -317,9 +317,35 @@ export async function POST(request: NextRequest) {
         const altName = (aiResult.contact_name || "").trim();
         const altPhone = (aiResult.contact_phone || "").replace(/\D/g, "");
         const rel = (aiResult.relationship || "contact").trim();
-        if (altName || altPhone) {
+        if (altPhone && altPhone.length >= 10) {
+          // Auto-handoff: save alt contact onto WO + text them with openings.
+          // The alt contact's reply will route back to this WO via the
+          // alt_contact_phone lookup in customer-lookup.
+          await fetch(`${APP_URL}/api/sms/alt-contact-handoff`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              work_order_id: customerData.active_wo.wo_id,
+              contact_name: altName,
+              contact_phone: altPhone,
+              relationship: rel,
+              tenant_id: tenantId,
+            }),
+          });
+          // Append a stamped note for the office's audit trail.
           const stamp = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
-          const line = `[${stamp}] Customer asked us to contact ${rel} ${altName}${altPhone ? ` at ${altPhone}` : ""} to schedule.`;
+          const line = `[${stamp}] Auto-handoff: texted ${rel} ${altName} at ${altPhone} to schedule.`;
+          const { data: woRow } = await sb
+            .from("work_orders")
+            .select("notes")
+            .eq("id", customerData.active_wo.wo_id)
+            .single();
+          const newNotes = woRow?.notes ? `${woRow.notes}\n\n${line}` : line;
+          await sb.from("work_orders").update({ notes: newNotes }).eq("id", customerData.active_wo.wo_id);
+        } else if (altName) {
+          // Phone wasn't extractable — fall back to office handoff.
+          const stamp = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
+          const line = `[${stamp}] Customer asked us to contact ${rel} ${altName} to schedule (no phone captured — follow up manually).`;
           const { data: woRow } = await sb
             .from("work_orders")
             .select("notes")
@@ -329,7 +355,7 @@ export async function POST(request: NextRequest) {
           await sb.from("work_orders").update({ notes: newNotes }).eq("id", customerData.active_wo.wo_id);
         }
       } catch (e) {
-        console.error("[SMS] alt_contact persist failed:", e);
+        console.error("[SMS] alt_contact handoff failed:", e);
       }
     }
 

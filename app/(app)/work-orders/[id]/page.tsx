@@ -752,6 +752,15 @@ export default function WorkOrderDetailPage() {
               <Mail size={14} /> {customer.email}
             </a>
           )}
+          {workOrder.alt_contact_phone && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 mb-1">Alt Contact ({workOrder.alt_contact_relationship || "contact"})</p>
+              <p className="text-sm text-gray-900 font-medium">{workOrder.alt_contact_name || "—"}</p>
+              <a href={`tel:${workOrder.alt_contact_phone}`} className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700">
+                <Phone size={14} /> {workOrder.alt_contact_phone}
+              </a>
+            </div>
+          )}
         </div>
       </div>
 

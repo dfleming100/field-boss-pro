@@ -168,6 +168,34 @@ export async function POST(request: NextRequest) {
       if (data?.length) customer = data[0];
     }
 
+    // Fallback: maybe this number is an alt_contact on someone else's WO
+    // (e.g., husband Scott replying to a handoff text we sent him on behalf
+    // of his wife Lori). Look up by alt_contact_phone and route to that WO's
+    // customer so the rest of the flow operates on the original WO.
+    if (!customer && phone.length >= 7) {
+      const last10 =
+        phone.length === 10
+          ? `+1${phone}`
+          : phone.length === 11
+          ? `+${phone}`
+          : phone;
+      const { data: altWos } = await sb
+        .from("work_orders")
+        .select("customer_id")
+        .eq("tenant_id", tenantId)
+        .eq("alt_contact_phone", last10)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (altWos?.length) {
+        const { data: c } = await sb
+          .from("customers")
+          .select("*")
+          .eq("id", altWos[0].customer_id)
+          .single();
+        if (c) customer = c;
+      }
+    }
+
     // Fallback: search by name
     if (!customer && name.length >= 2) {
       const { data } = await sb
