@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { Plus, ChevronDown, Search, Filter } from "lucide-react";
+import { Plus, ChevronDown, Search, Filter, Upload } from "lucide-react";
 
 interface Appointment {
   appointment_date: string;
@@ -43,6 +43,7 @@ const WARRANTY_BADGE: Record<string, { bg: string; text: string; label: string }
 
 type StatusFilter =
   | "all"
+  | "New Hold"
   | "New"
   | "Parts Needed"
   | "Parts Ordered"
@@ -54,6 +55,7 @@ const STATUS_CONFIG: Record<
   string,
   { label: string; bg: string; text: string; dot: string }
 > = {
+  "New Hold": { label: "New Hold", bg: "bg-slate-100", text: "text-slate-700", dot: "bg-slate-500" },
   "New": { label: "New", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
   "Parts Needed": { label: "Parts Needed", bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500" },
   "Parts Ordered": { label: "Parts Ordered", bg: "bg-amber-100", text: "text-amber-700", dot: "bg-amber-500" },
@@ -79,7 +81,7 @@ function WorkOrdersContent() {
   const fetchWorkOrders = useCallback(async () => {
     if (!tenantUser) return;
     try {
-      const { data, error: fetchError } = await supabase
+      let query = supabase
         .from("work_orders")
         .select(
           `
@@ -90,8 +92,23 @@ function WorkOrdersContent() {
           warranty_links(provider)
         `
         )
-        .eq("tenant_id", tenantUser.tenant_id)
-        .order("created_at", { ascending: false });
+        .eq("tenant_id", tenantUser.tenant_id);
+
+      // Tech role: WOs assigned to them OR WOs they have appointments on.
+      if (tenantUser.role === "technician" && tenantUser.technician_id) {
+        const techId = tenantUser.technician_id;
+        const { data: apptWos } = await supabase
+          .from("appointments")
+          .select("work_order_id")
+          .eq("tenant_id", tenantUser.tenant_id)
+          .eq("technician_id", techId);
+        const wosFromAppts = Array.from(new Set((apptWos || []).map((a: any) => a.work_order_id))).filter(Boolean);
+        const orParts = [`assigned_technician_id.eq.${techId}`];
+        if (wosFromAppts.length > 0) orParts.push(`id.in.(${wosFromAppts.join(",")})`);
+        query = query.or(orParts.join(","));
+      }
+
+      const { data, error: fetchError } = await query.order("created_at", { ascending: false });
 
       if (fetchError) throw fetchError;
 
@@ -232,13 +249,24 @@ function WorkOrdersContent() {
             Manage and track all service work orders
           </p>
         </div>
-        <Link
-          href="/work-orders/new"
-          className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 shadow-sm"
-        >
-          <Plus size={16} />
-          New Work Order
-        </Link>
+        {tenantUser?.role !== "technician" && (
+          <div className="flex gap-2">
+            <Link
+              href="/work-orders/import"
+              className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 shadow-sm"
+            >
+              <Upload size={16} />
+              Import AHS CSV
+            </Link>
+            <Link
+              href="/work-orders/new"
+              className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 shadow-sm"
+            >
+              <Plus size={16} />
+              New Work Order
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Status Counters */}
@@ -346,6 +374,7 @@ function WorkOrdersContent() {
               {(
                 [
                   "all",
+                  "New Hold",
                   "New",
                   "Parts Needed",
                   "Parts Ordered",
