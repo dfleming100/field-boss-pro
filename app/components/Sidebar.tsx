@@ -51,9 +51,11 @@ const bottomItems = [
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
-export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
   const { tenantUser } = useAuth();
   const isTech = tenantUser?.role === "technician";
@@ -75,6 +77,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     return (
       <Link
         href={item.href}
+        onClick={() => onMobileClose?.()}
         className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group
           ${
             active
@@ -99,9 +102,21 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   };
 
   return (
+    <>
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={onMobileClose}
+          aria-label="Close menu"
+        />
+      )}
     <aside
-      className={`fixed top-0 left-0 h-screen bg-slate-900 border-r border-slate-800 flex flex-col z-40 transition-all duration-200
-        ${collapsed ? "w-[68px]" : "w-[240px]"}
+      className={`fixed top-0 left-0 h-screen bg-slate-900 border-r border-slate-800 flex flex-col z-50 transition-all duration-200
+        ${collapsed ? "md:w-[68px]" : "md:w-[240px]"}
+        w-[260px]
+        md:translate-x-0
+        ${mobileOpen ? "translate-x-0" : "-translate-x-full"}
       `}
     >
       {/* Brand */}
@@ -155,5 +170,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </button>
       </div>
     </aside>
+    </>
   );
 }

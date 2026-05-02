@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, createContext, useContext } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
 import Sidebar from "@/app/components/Sidebar";
 import TopNav from "@/app/components/TopNav";
 import Softphone from "@/app/components/Softphone";
+import BillingBanner from "@/app/components/BillingBanner";
 
 // Softphone context so any page can trigger a call
 interface SoftphoneContextType {
@@ -17,9 +18,12 @@ export const useSoftphone = () => useContext(SoftphoneContext);
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, tenantUser, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [sessionStuck, setSessionStuck] = useState(false);
+  const [billingMessage, setBillingMessage] = useState<string | null>(null);
 
   // Softphone state
   const [softphoneOpen, setSoftphoneOpen] = useState(false);
@@ -41,6 +45,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.push("/login");
     }
   }, [loading, user, router, mounted]);
+
+  // Subscription gate: check billing status; lock app or show banner
+  useEffect(() => {
+    if (!tenantUser?.tenant_id) return;
+    // Skip the gate on the billing page itself so users can resubscribe
+    const isBillingPage = pathname?.startsWith("/dashboard/billing");
+    fetch(`/api/billing/status?tenantId=${tenantUser.tenant_id}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.locked && !isBillingPage) {
+          router.push("/billing-required");
+          return;
+        }
+        if (d.message) setBillingMessage(d.message);
+        else setBillingMessage(null);
+      })
+      .catch(() => {});
+  }, [tenantUser?.tenant_id, pathname, router]);
 
   // Detect stuck session: user exists but tenantUser never loads
   useEffect(() => {
@@ -72,13 +94,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Sidebar
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+          mobileOpen={mobileMenuOpen}
+          onMobileClose={() => setMobileMenuOpen(false)}
         />
         <div
           className={`transition-all duration-200 ${
-            sidebarCollapsed ? "ml-[68px]" : "ml-[240px]"
+            sidebarCollapsed ? "md:ml-[68px]" : "md:ml-[240px]"
           }`}
         >
-          <TopNav />
+          <TopNav onMobileMenuOpen={() => setMobileMenuOpen(true)} />
+          {billingMessage && <BillingBanner message={billingMessage} />}
           <main className="p-6">
             {sessionStuck ? (
               <div className="flex items-center justify-center py-24">

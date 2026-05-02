@@ -5,9 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
+import NotificationsBell from "./NotificationsBell";
 import {
   Plus,
-  Bell,
   ChevronDown,
   LogOut,
   User,
@@ -15,9 +15,14 @@ import {
   UserPlus,
   Users,
   Shield,
+  Menu,
 } from "lucide-react";
 
-export default function TopNav() {
+interface TopNavProps {
+  onMobileMenuOpen?: () => void;
+}
+
+export default function TopNav({ onMobileMenuOpen }: TopNavProps = {}) {
   const router = useRouter();
   const { user, tenantUser, signOut } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
@@ -73,9 +78,17 @@ export default function TopNav() {
       : user?.email?.[0]?.toUpperCase() || "U";
 
   return (
-    <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 sticky top-0 z-30">
-      {/* Left: company / tenant name */}
-      <div>
+    <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:px-6 sticky top-0 z-30">
+      {/* Left: hamburger (mobile) + company name */}
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          type="button"
+          onClick={() => onMobileMenuOpen?.()}
+          className="md:hidden p-2 -ml-2 rounded-lg text-gray-600 hover:bg-gray-100"
+          aria-label="Open menu"
+        >
+          <Menu size={22} />
+        </button>
         <h2 className="text-lg font-semibold text-gray-900 truncate">
           {tenantName || (tenantUser?.tenant_id ? "Loading…" : "Field Boss Pro")}
         </h2>
@@ -123,12 +136,7 @@ export default function TopNav() {
         </div>
 
         {/* Alerts */}
-        <button className="relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-          <Bell size={20} />
-          <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-            3
-          </span>
-        </button>
+        <NotificationsBell />
 
         {/* Profile */}
         <div ref={profileRef} className="relative">
