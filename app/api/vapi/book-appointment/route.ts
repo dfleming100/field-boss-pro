@@ -76,7 +76,13 @@ export async function POST(request: NextRequest) {
     const zip = wo.customer?.zip || "";
     const jobType = wo.job_type || "";
     const isRepair = jobType === "Repair Follow-up";
-    const techId = techIdArg ? parseInt(techIdArg) : wo.assigned_technician_id;
+    // For Repair Follow-up, the original tech who diagnosed always handles
+    // the repair. Ignore any tech_id arg from Vapi/SMS — it's a known
+    // hallucination source and was the suspected root cause of the Lori
+    // Trapp glitch where booking failed against the wrong tech's capacity.
+    const techId = isRepair
+      ? wo.assigned_technician_id
+      : (techIdArg ? parseInt(techIdArg) : wo.assigned_technician_id);
 
     // Get tech info from database
     let techName = wo.technician?.tech_name || "";
@@ -172,12 +178,15 @@ export async function POST(request: NextRequest) {
     const startTime = to24h(win[0]);
     const endTime = to24h(win[1]);
 
-    // ── Cancel existing appointments and clean up capacity ──
+    // ── Cancel existing FUTURE appointments and clean up capacity ──
+    // (don't retroactively cancel past appointments — they should be marked completed)
+    const todayStr = new Date().toISOString().slice(0, 10);
     const { data: oldAppts } = await sb
       .from("appointments")
       .select("id, appointment_date, technician_id")
       .eq("work_order_id", wo.id)
-      .eq("status", "scheduled");
+      .eq("status", "scheduled")
+      .gte("appointment_date", todayStr);
 
     for (const oldAppt of oldAppts || []) {
       const { data: oldCap } = await sb
