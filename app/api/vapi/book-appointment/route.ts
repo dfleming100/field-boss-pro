@@ -136,16 +136,39 @@ export async function POST(request: NextRequest) {
       return wrapResponse(toolCallId, { success: false, error: "dayoff", message: "The technician is not available on that date. Please choose a different date." });
     }
 
-    // Check capacity
+    // ── Capacity check ──
+    // SOURCE OF TRUTH = actual scheduled appointments, NOT the
+    // tech_daily_capacity counter. The counter has been observed to drift
+    // out of sync (Kazi 2026-05-02 was booked into a 13th slot when Jessys
+    // max=12), so we COUNT(*) at booking time to enforce the cap reliably.
+    // The counter is still maintained below for legacy reads (e.g. dashboards)
+    // but the gate decision uses real numbers only.
     const { data: capRow } = await sb
       .from("tech_daily_capacity")
       .select("*")
       .eq("technician_id", techId)
       .eq("date", chosenDate)
-      .single();
+      .maybeSingle();
 
-    const totalBooked = capRow?.current_appointments || 0;
-    const repairsBooked = capRow?.current_repairs || 0;
+    const { count: actualTotal } = await sb
+      .from("appointments")
+      .select("id", { count: "exact", head: true })
+      .eq("technician_id", techId)
+      .eq("appointment_date", chosenDate)
+      .eq("status", "scheduled");
+    const totalBooked = actualTotal ?? 0;
+
+    let repairsBooked = 0;
+    if (isRepair) {
+      const { count: actualRepairs } = await sb
+        .from("appointments")
+        .select("id, work_order:work_orders!inner(job_type)", { count: "exact", head: true })
+        .eq("technician_id", techId)
+        .eq("appointment_date", chosenDate)
+        .eq("status", "scheduled")
+        .eq("work_order.job_type", "Repair Follow-up");
+      repairsBooked = actualRepairs ?? 0;
+    }
 
     if (totalBooked >= maxTotal) {
       return wrapResponse(toolCallId, { success: false, error: "capacity_total", message: "The technician is fully booked on that date. Please choose a different date." });

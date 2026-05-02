@@ -141,31 +141,83 @@ export async function POST(request: NextRequest) {
       // Repair follow-up: same tech
       techsToCheck = [assignedTechId];
     } else if (applianceType && skillRows && skillRows.length > 0) {
-      // Find techs with skills matching this appliance, sorted by priority.
-      // Use keyword match so any of these formats work:
-      //   "Cooktop: Electric" matches "Cooktop"
-      //   "Electric Cooktop" matches "Cooktop"
-      //   "Gas Dryer" matches "Dryer"
-      //   "Dryer: Gas" matches "Dryer"
-      //   "Built In Microwave" matches "Microwave"
-      const appLower = applianceType.toLowerCase();
-      const matching = skillRows
-        .filter((s) => {
-          const skillLower = (s.appliance_type || "").toLowerCase();
-          return appLower === skillLower
-            || appLower.includes(skillLower)
-            || skillLower.includes(appLower);
-        })
-        .sort((a, b) => a.priority - b.priority);
+      // Multi-appliance routing: split the comma-separated appliance string,
+      // find which techs can handle EACH appliance, then intersect (the chosen
+      // tech must be able to service all appliances on the WO). Sort by SUM
+      // of priorities so a tech who is "primary" (priority 1) on every appliance
+      // wins over a tech who is "secondary" (priority 2) on some.
+      //
+      // Example: WO has "Cooktop, Dishwasher".
+      //   - Jessy: cooktop=1, dishwasher=2 → can do both, priority sum=3
+      //   - Darryl: dishwasher=1 (no cooktop) → can't do cooktop, excluded
+      //   → Jessy wins.
+      const appliancesOnWo: string[] = applianceType.split(",").map((a: string) => a.trim()).filter(Boolean);
 
-      if (matching.length > 0) {
-        techsToCheck = matching.map((s) => s.technician_id);
-      } else {
-        // No skill match — use all techs
-        techsToCheck = (allTechs || []).map((t) => t.id);
+      // For each appliance, find techs whose skill matches it (using the
+      // existing keyword match so "Built In Microwave" → "Microwave",
+      // "Glass Cooktop" → "Cooktop", etc.).
+      const matchSkill = (skillLower: string, appLower: string): boolean => {
+        if (!skillLower || !appLower) return false;
+        if (appLower === skillLower) return true;
+        if (appLower.endsWith(" " + skillLower)) return true;
+        if (skillLower.startsWith(appLower + ":") || appLower.startsWith(skillLower + ":")) return true;
+        return false;
+      };
+
+      // Map of techId → array of priorities (one per matched appliance on the WO).
+      // Only techs who match ALL appliances are kept.
+      const techPrioritiesPerAppliance: Record<number, number[]> = {};
+      let allAppliancesMatched = true;
+      for (const wAppl of appliancesOnWo) {
+        const wLower = wAppl.toLowerCase();
+        const matchingForThis = skillRows.filter((s) => matchSkill((s.appliance_type || "").toLowerCase().trim(), wLower));
+        if (matchingForThis.length === 0) {
+          allAppliancesMatched = false;
+          console.log(`[SLOTS] No tech has skill for "${wAppl}" on WO ${workOrderNumber}`);
+          break;
+        }
+        const techsForThis = new Set(matchingForThis.map((s) => s.technician_id));
+        // First appliance: seed the map. Later appliances: intersect.
+        if (Object.keys(techPrioritiesPerAppliance).length === 0) {
+          for (const s of matchingForThis) {
+            if (!techPrioritiesPerAppliance[s.technician_id]) techPrioritiesPerAppliance[s.technician_id] = [];
+            techPrioritiesPerAppliance[s.technician_id].push(s.priority);
+          }
+        } else {
+          // Drop techs who don't have skill for this appliance
+          for (const techId of Object.keys(techPrioritiesPerAppliance).map(Number)) {
+            if (!techsForThis.has(techId)) {
+              delete techPrioritiesPerAppliance[techId];
+            } else {
+              const skillForThis = matchingForThis.find((s) => s.technician_id === techId);
+              if (skillForThis) techPrioritiesPerAppliance[techId].push(skillForThis.priority);
+            }
+          }
+        }
       }
+
+      const eligibleTechs = Object.keys(techPrioritiesPerAppliance).map(Number);
+
+      if (!allAppliancesMatched || eligibleTechs.length === 0) {
+        // No single tech can do all the appliances on this WO. Block scheduling.
+        console.log(`[SLOTS] No tech covers all appliances "${applianceType}" — escalating`);
+        return wrapResponse(toolCallId, {
+          agent_summary: `I am sorry, we do not currently have a technician available to service all the items on this work order (${applianceType}). Please contact our office so we can split the job or escalate.`,
+          available_dates: [], tech_id: "", tech_name: "", wo_number: workOrderNumber,
+          window_start: "", window_end: "", slot_count: 0,
+        });
+      }
+
+      // Sort by sum of priorities (lower = better). Tie-break by min priority.
+      techsToCheck = eligibleTechs.sort((a, b) => {
+        const sumA = techPrioritiesPerAppliance[a].reduce((x, y) => x + y, 0);
+        const sumB = techPrioritiesPerAppliance[b].reduce((x, y) => x + y, 0);
+        if (sumA !== sumB) return sumA - sumB;
+        return Math.min(...techPrioritiesPerAppliance[a]) - Math.min(...techPrioritiesPerAppliance[b]);
+      });
+      console.log(`[SLOTS] Multi-appliance "${applianceType}" eligible techs (best first):`, techsToCheck);
     } else {
-      // No skills configured — use all techs
+      // No skills configured for tenant at all — fall back to all techs
       techsToCheck = (allTechs || []).map((t) => t.id);
     }
 
@@ -177,19 +229,23 @@ export async function POST(request: NextRequest) {
       .eq("status", "scheduled");
     const currentApptDates = new Set((currentAppts || []).map((a: any) => a.appointment_date));
 
-    // ── Fetch tech capacity for next 30 days ──
-    const { data: capacityRows } = await sb
-      .from("tech_daily_capacity")
-      .select("*")
+    // ── Compute REAL capacity from actual appointments (not the counter) ──
+    // The tech_daily_capacity counter has been observed to drift out of sync,
+    // which let us double-book. Source of truth = COUNT(*) on appointments.
+    const { data: futureAppts } = await sb
+      .from("appointments")
+      .select("technician_id, appointment_date, work_order:work_orders!inner(job_type)")
       .eq("tenant_id", tenantId)
-      .gte("date", todayCT());
+      .eq("status", "scheduled")
+      .gte("appointment_date", todayCT());
 
     const capMap: Record<string, { total: number; repairs: number }> = {};
-    for (const row of capacityRows || []) {
-      capMap[`${row.technician_id}-${row.date}`] = {
-        total: row.current_appointments || 0,
-        repairs: row.current_repairs || 0,
-      };
+    for (const a of (futureAppts as any[]) || []) {
+      const key = `${a.technician_id}-${a.appointment_date}`;
+      if (!capMap[key]) capMap[key] = { total: 0, repairs: 0 };
+      capMap[key].total += 1;
+      const wo = Array.isArray(a.work_order) ? a.work_order[0] : a.work_order;
+      if (wo?.job_type === "Repair Follow-up") capMap[key].repairs += 1;
     }
 
     // ── Fetch days off + holidays ──
