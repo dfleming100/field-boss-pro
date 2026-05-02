@@ -196,32 +196,41 @@ function SchedulingContent() {
     if (!tenantUser) return;
     setIsLoading(true);
 
+    const isTech = tenantUser.role === "technician";
+    const techId = tenantUser.technician_id || null;
+
+    let apptQuery = supabase
+      .from("appointments")
+      .select(`
+        *,
+        work_order:work_orders(work_order_number, job_type, customer_id, status),
+        customer:work_orders!inner(customer:customers(customer_name, service_address, city))
+      `)
+      .eq("tenant_id", tenantUser.tenant_id)
+      .eq("status", "scheduled")
+      .gte("appointment_date", dateRange.start)
+      .lte("appointment_date", dateRange.end);
+    if (isTech && techId) apptQuery = apptQuery.eq("technician_id", techId);
+
+    let woQuery = supabase
+      .from("work_orders")
+      .select(`*, customer:customers(customer_name, service_address, city, state)`)
+      .eq("tenant_id", tenantUser.tenant_id)
+      .in("status", ["New", "Parts Ordered", "Parts Have Arrived"]);
+    if (isTech && techId) woQuery = woQuery.eq("assigned_technician_id", techId);
+
+    let techQuery = supabase
+      .from("technicians")
+      .select("id, tech_name")
+      .eq("tenant_id", tenantUser.tenant_id)
+      .eq("is_active", true);
+    // Tech: only see themselves in the tech filter / column header
+    if (isTech && techId) techQuery = techQuery.eq("id", techId);
+
     const [techRes, apptRes, woRes] = await Promise.all([
-      supabase
-        .from("technicians")
-        .select("id, tech_name")
-        .eq("tenant_id", tenantUser.tenant_id)
-        .eq("is_active", true)
-        .order("tech_name"),
-      supabase
-        .from("appointments")
-        .select(`
-          *,
-          work_order:work_orders(work_order_number, job_type, customer_id, status),
-          customer:work_orders!inner(customer:customers(customer_name, service_address, city))
-        `)
-        .eq("tenant_id", tenantUser.tenant_id)
-        .eq("status", "scheduled")
-        .gte("appointment_date", dateRange.start)
-        .lte("appointment_date", dateRange.end)
-        .order("start_time"),
-      supabase
-        .from("work_orders")
-        .select(`*, customer:customers(customer_name, service_address, city, state)`)
-        .eq("tenant_id", tenantUser.tenant_id)
-        .in("status", ["New", "Parts Ordered", "Parts Have Arrived"])
-        .order("created_at", { ascending: false })
-        .limit(20),
+      techQuery.order("tech_name"),
+      apptQuery.order("start_time"),
+      woQuery.order("created_at", { ascending: false }).limit(20),
     ]);
 
     if (techRes.data) {
@@ -560,9 +569,22 @@ function SchedulingContent() {
                               }}
                               title={`${appt.work_order?.work_order_number || ""} — ${appt.customer_name || ""}\n${appt.service_address || ""}${appt.city ? ", " + appt.city : ""}\n${formatTime(appt.start_time)}${appt.end_time ? " - " + formatTime(appt.end_time) : ""}`}
                             >
-                              <p className={`${isNarrow ? "text-[10px]" : "text-xs"} font-semibold ${color.text} truncate`}>
-                                {appt.work_order?.work_order_number || `WO-${appt.work_order_id}`}
-                              </p>
+                              <div className="flex items-center gap-1">
+                                <p className={`${isNarrow ? "text-[10px]" : "text-xs"} font-semibold ${color.text} truncate`}>
+                                  {appt.work_order?.work_order_number || `WO-${appt.work_order_id}`}
+                                </p>
+                                {appt.work_order?.job_type && (
+                                  <span
+                                    className={`text-[9px] font-bold px-1 rounded uppercase tracking-wide ${
+                                      appt.work_order.job_type === "Repair Follow-up"
+                                        ? "bg-teal-100 text-teal-700"
+                                        : "bg-blue-100 text-blue-700"
+                                    }`}
+                                  >
+                                    {appt.work_order.job_type === "Repair Follow-up" ? "Repair" : "Diag"}
+                                  </span>
+                                )}
+                              </div>
                               <p className={`${isNarrow ? "text-[10px]" : "text-xs"} font-medium text-gray-900 truncate`}>
                                 {appt.customer_name || "Customer"}
                               </p>
@@ -656,9 +678,22 @@ function SchedulingContent() {
                             }
                             className={`w-full text-left ${color.bg} border ${color.border} rounded-lg p-2 mb-2 hover:shadow-md transition`}
                           >
-                            <p className={`text-[11px] font-bold ${color.text}`}>
-                              {appt.work_order?.work_order_number || "WO"}
-                            </p>
+                            <div className="flex items-center gap-1">
+                              <p className={`text-[11px] font-bold ${color.text}`}>
+                                {appt.work_order?.work_order_number || "WO"}
+                              </p>
+                              {appt.work_order?.job_type && (
+                                <span
+                                  className={`text-[9px] font-bold px-1 rounded uppercase tracking-wide ${
+                                    appt.work_order.job_type === "Repair Follow-up"
+                                      ? "bg-teal-100 text-teal-700"
+                                      : "bg-blue-100 text-blue-700"
+                                  }`}
+                                >
+                                  {appt.work_order.job_type === "Repair Follow-up" ? "Repair" : "Diag"}
+                                </span>
+                              )}
+                            </div>
                             <p className="text-xs font-medium text-gray-900 truncate">
                               {appt.customer_name || "Customer"}
                             </p>
