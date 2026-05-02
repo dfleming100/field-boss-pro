@@ -287,7 +287,16 @@ export async function POST(request: NextRequest) {
         });
         const bookData = await bookRes.json();
         if (!bookData.success) {
-          replyText = `Sorry, that date is not available. ${slotsData?.agent_summary || `Please call us at ${tenantInfo.phone || "the office"}.`}`;
+          // Use the specific failure message from book-appointment instead of
+          // pasting the agent_summary, which contradicts the "not available" line.
+          const reason = bookData.message || "We could not confirm that date.";
+          const first3 = availDates.slice(0, 3);
+          const fmtDates = first3.map((d: string) => {
+            const dt = new Date(d + "T12:00:00");
+            const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+            return `${months[dt.getMonth()]} ${dt.getDate()}`;
+          }).join(", ");
+          replyText = `${reason} We have openings on ${fmtDates}. Which day works for you?`;
         }
       } else {
         // Date not in available list — override with info
@@ -298,6 +307,29 @@ export async function POST(request: NextRequest) {
           return `${months[dt.getMonth()]} ${dt.getDate()}`;
         }).join(", ");
         replyText = `Sorry, that date is not available. We have openings on ${fmtDates}. Which day works for you?`;
+      }
+    }
+
+    // Alternate contact handoff — capture name/phone, append to WO notes,
+    // do NOT attempt booking. Office (or Phase 2 auto-handoff) takes it from here.
+    if (aiResult.action === "alt_contact" && customerData.active_wo) {
+      try {
+        const altName = (aiResult.contact_name || "").trim();
+        const altPhone = (aiResult.contact_phone || "").replace(/\D/g, "");
+        const rel = (aiResult.relationship || "contact").trim();
+        if (altName || altPhone) {
+          const stamp = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
+          const line = `[${stamp}] Customer asked us to contact ${rel} ${altName}${altPhone ? ` at ${altPhone}` : ""} to schedule.`;
+          const { data: woRow } = await sb
+            .from("work_orders")
+            .select("notes")
+            .eq("id", customerData.active_wo.wo_id)
+            .single();
+          const newNotes = woRow?.notes ? `${woRow.notes}\n\n${line}` : line;
+          await sb.from("work_orders").update({ notes: newNotes }).eq("id", customerData.active_wo.wo_id);
+        }
+      } catch (e) {
+        console.error("[SMS] alt_contact persist failed:", e);
       }
     }
 
@@ -654,6 +686,18 @@ GENERAL RULES:
 - NEVER return "book" for a date not in the Available Dates list. If the date they mention is NOT in the list, return "info" with available dates instead.
 - Always include the customer's name
 - "yes", "ok", "sure", "that works" ONLY count as booking intent if Company just offered specific dates in the previous message. Check the CONVERSATION HISTORY — if Company's most recent message offered dates, return action "book" with the first Available Date. If there was NO recent date offer, treat "yes" as ambiguous and respond with action "info" asking what they want to do.
+- NEVER claim something is "scheduled" or "your appointment is on..." unless an EXISTING APPOINTMENT block is shown above. If there is no existing appointment, do not invent one. Ask for a date instead.
+
+ALTERNATE CONTACT REQUESTS — Customer asks us to coordinate with a different person (very common: tenant, spouse, adult child, property manager).
+Examples that ALL trigger this rule:
+- "Schedule with my tenant at 972-555-1234"
+- "Call my husband to schedule, his number is 214-555-1234"
+- "Coordinate with my wife at (469) 555-1234"
+- "My son will let you in, his number is 555-1234"
+- "Please reach out to the property manager Jane at 555-1234"
+- "I am out of town, talk to [name] at [phone]"
+Extract: contact_name (best guess from text — "my husband Scott" → "Scott", "my tenant" → "Tenant"), contact_phone (digits), relationship (wife/husband/tenant/son/daughter/property manager/other).
+Return action "alt_contact" — DO NOT try to book on the customer's behalf. The office will reach out to the alt contact directly.
 
 ACTIONS — return JSON:
 
@@ -669,6 +713,7 @@ ACTIONS — return JSON:
 10. "review" — Reply to a review request (number 1-5). Return: {"action": "review", "reply": "thank you message"}
 11. "optout" — STOP/unsubscribe. Return: {"action": "optout", "reply": "opted out message"}
 12. "unclear" — Truly cannot determine intent. Return: {"action": "unclear", "reply": "friendly prompt to clarify"}
+13. "alt_contact" — Customer wants us to schedule/coordinate with someone else. Return: {"action": "alt_contact", "contact_name": "Scott", "contact_phone": "4696676150", "relationship": "husband", "reply": "Got it, [first_name]. I will have our team reach out to [contact_name] at [pretty_phone] to schedule your [appliance]. Thanks!"}
 
 Return ONLY valid JSON.`;
 
@@ -736,6 +781,9 @@ Return ONLY valid JSON.`;
       state: parsed.state,
       zip: parsed.zip,
       appliance_type: parsed.appliance_type,
+      contact_name: parsed.contact_name,
+      contact_phone: parsed.contact_phone,
+      relationship: parsed.relationship,
     };
   } catch (err) {
     console.error("[SMS] Claude API error:", err);
