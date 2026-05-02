@@ -435,11 +435,15 @@ export default function SMSCommandCenter() {
   const filtered = conversations.filter((c) => {
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
-    return (
-      c.phone.includes(searchTerm.replace(/\D/g, "")) ||
-      c.customer_name?.toLowerCase().includes(term) ||
-      c.last_message.toLowerCase().includes(term)
-    );
+    const digitsTerm = searchTerm.replace(/\D/g, "");
+    // Only apply the phone-match if the search has at least one digit;
+    // otherwise "Lori".replace(/\D/g,"") === "" and includes("") was true
+    // for every phone, defeating the name search.
+    const phoneMatch =
+      digitsTerm.length > 0 && c.phone.replace(/\D/g, "").includes(digitsTerm);
+    const nameMatch = (c.customer_name || "").toLowerCase().includes(term);
+    const msgMatch = (c.last_message || "").toLowerCase().includes(term);
+    return phoneMatch || nameMatch || msgMatch;
   });
 
   const totalUnread = conversations.reduce((sum, c) => sum + c.unread_count, 0);
