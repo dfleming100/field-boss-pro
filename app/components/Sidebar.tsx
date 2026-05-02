@@ -35,7 +35,7 @@ const navItems: NavItem[] = [
   { label: "Customers", href: "/customers", icon: Users },
   { label: "Technicians", href: "/people", icon: Wrench, techHidden: true },
   { label: "Work Orders", href: "/work-orders", icon: ClipboardList },
-  { label: "SMS Center", href: "/sms", icon: MessageSquare },
+  { label: "SMS Center", href: "/sms", icon: MessageSquare, techHidden: true },
   { label: "Map", href: "/map", icon: MapPin, techHidden: true },
   { label: "Scheduling", href: "/scheduling", icon: CalendarDays },
   { label: "Invoices", href: "/invoices", icon: FileText, techHidden: true },

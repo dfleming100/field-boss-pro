@@ -60,6 +60,20 @@ type Pending = { file: File; previewUrl: string };
 export default function SMSCommandCenter() {
   const { tenantUser } = useAuth();
   const { openSoftphone } = useSoftphone();
+
+  // Tech-level users cannot view the SMS Center (admin-only feature).
+  // Hide via sidebar AND guard direct URL access.
+  if (tenantUser && (tenantUser as any).role === "technician") {
+    return (
+      <div className="max-w-md mx-auto mt-24 p-6 bg-white border border-gray-200 rounded-xl text-center">
+        <h1 className="text-lg font-semibold text-gray-900 mb-2">Not available</h1>
+        <p className="text-sm text-gray-600">
+          The SMS Center is an admin-only feature. Ask your account owner if you need access.
+        </p>
+      </div>
+    );
+  }
+
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
