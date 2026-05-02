@@ -83,16 +83,27 @@ serve(async (req: Request) => {
       .eq("id", record.customer_id)
       .single();
 
-    // Prefer phone2 (text-capable line) for SMS, fall back to phone.
-    if (customer) {
-      customer.phone = customer.phone2 || customer.phone;
-    }
-    if (!customer || !customer.phone) {
+    // Build a deduped list of all phones to text — fan out to both phone +
+    // phone2 (last-10-digits dedupe).
+    const _rawPhones = [customer?.phone, customer?.phone2]
+      .map((p) => (p ? String(p).replace(/\D/g, "") : ""))
+      .filter((d) => d.length >= 10);
+    const _seen = new Set<string>();
+    const phoneDigitsList = _rawPhones.filter((d) => {
+      const k = d.slice(-10);
+      if (_seen.has(k)) return false;
+      _seen.add(k);
+      return true;
+    });
+    if (!customer || phoneDigitsList.length === 0) {
       return new Response(
         JSON.stringify({ skipped: true, reason: "No customer phone" }),
         { status: 200 }
       );
     }
+    // Use the first phone for context/template; the SMS-send block below
+    // loops phoneDigitsList to actually fan out.
+    customer.phone = phoneDigitsList[0];
 
     // Fetch tenant's Twilio credentials
     const { data: integration } = await supabase
@@ -168,42 +179,45 @@ serve(async (req: Request) => {
       const fromPhone = twilioKeys?.phoneNumber || twilioKeys?.phone_number;
 
       if (accountSid && authToken && fromPhone) {
-        const phoneDigits = customer.phone.replace(/\D/g, "");
-        const toPhone =
-          phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
-
         const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
         const basicAuth = btoa(`${accountSid}:${authToken}`);
+        let anyOk = false;
 
-        const twilioRes = await fetch(twilioUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Basic ${basicAuth}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams({
-            From: fromPhone,
-            To: toPhone,
-            Body: smsBody,
-          }),
-        });
+        // Fan out to every distinct phone (phone + phone2) on the customer.
+        for (const phoneDigits of phoneDigitsList) {
+          const toPhone =
+            phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
 
-        const twilioData = await twilioRes.json();
-        actions.push(`SMS sent: ${twilioData.sid || "error"}`);
+          const twilioRes = await fetch(twilioUrl, {
+            method: "POST",
+            headers: {
+              Authorization: `Basic ${basicAuth}`,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              From: fromPhone,
+              To: toPhone,
+              Body: smsBody,
+            }),
+          });
 
-        // Log SMS
-        await supabase.from("sms_logs").insert({
-          tenant_id: record.tenant_id,
-          recipient_phone: toPhone,
-          message_type: `status_${newStatus}`,
-          status: twilioRes.ok ? "sent" : "failed",
-          twilio_message_id: twilioData.sid || null,
-          error_message: twilioRes.ok ? null : JSON.stringify(twilioData),
-        });
+          const twilioData = await twilioRes.json();
+          actions.push(`SMS sent to ${toPhone}: ${twilioData.sid || "error"}`);
+          if (twilioRes.ok) anyOk = true;
+
+          await supabase.from("sms_logs").insert({
+            tenant_id: record.tenant_id,
+            recipient_phone: toPhone,
+            message_type: `status_${newStatus}`,
+            status: twilioRes.ok ? "sent" : "failed",
+            twilio_message_id: twilioData.sid || null,
+            error_message: twilioRes.ok ? null : JSON.stringify(twilioData),
+          });
+        }
 
         // For first-contact ("New") releases, mark outreach so the daily cron
         // skips this WO until the standard 10-hour cooldown elapses.
-        if (twilioRes.ok && newStatus === "New") {
+        if (anyOk && newStatus === "New") {
           const nowIso = new Date().toISOString();
           await supabase
             .from("work_orders")

@@ -126,13 +126,24 @@ export async function GET(request: NextRequest) {
 
     for (const wo of workOrders || []) {
       const customer = wo.customer as any;
-      // For SMS we prefer phone2 (text-capable line, populated by AHS phones[1]
-      // and FAHW claimantTextPhoneNum) and fall back to phone. Mutate the
-      // customer object so the rest of this loop transparently uses the SMS
-      // number wherever it reads customer.phone.
-      const smsPhone = customer?.phone2 || customer?.phone;
-      if (!smsPhone) continue;
-      customer.phone = smsPhone;
+      // Outreach fans out to BOTH numbers (phone + phone2) when present.
+      // AHS/FAHW often send a landline as phone1 and a text-capable cell
+      // as phone2 — we don't know which is which so we hit both.
+      const rawPhones = [customer?.phone, customer?.phone2]
+        .map((p) => (p ? String(p).replace(/\D/g, "") : ""))
+        .filter((d) => d.length >= 10);
+      // Dedupe by last 10 digits
+      const seen = new Set<string>();
+      const phoneDigitsList = rawPhones.filter((d) => {
+        const k = d.slice(-10);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      if (phoneDigitsList.length === 0) continue;
+      // First entry remains the "primary" used for context/logging;
+      // additional entries get the same SMS + Vapi call below.
+      customer.phone = phoneDigitsList[0];
 
       // Stop after 5 days from first outreach
       if (wo.first_outreach_date && new Date(wo.first_outreach_date) < new Date(fiveDaysAgo)) {
@@ -178,10 +189,12 @@ export async function GET(request: NextRequest) {
       const woNum = wo.work_order_number || "";
       const rawAddress = [customer.service_address, customer.city, customer.state].filter(Boolean).join(", ");
       const address = expandAddressForTTS(rawAddress);
-      const phoneDigits = customer.phone.replace(/\D/g, "");
-      const toPhone = phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
+      const result: any = { wo_id: wo.id, wo_number: woNum, sends: [] as any[] };
 
-      const result: any = { wo_id: wo.id, wo_number: woNum, to: toPhone, sms: false, vapi: false };
+      // Fan out SMS + Vapi to every distinct phone number (phone + phone2).
+      for (const phoneDigits of phoneDigitsList) {
+      const toPhone = phoneDigits.length === 10 ? `+1${phoneDigits}` : `+${phoneDigits}`;
+      const sendResult: any = { to: toPhone, sms: false, vapi: false };
 
       // ── 1. Send SMS (if Twilio is configured) ──
       if (twilioReady) {
@@ -203,7 +216,7 @@ export async function GET(request: NextRequest) {
             body: new URLSearchParams({ From: creds.phoneNumber, To: toPhone, Body: smsBody }),
           }
         );
-        result.sms = smsRes.ok;
+        sendResult.sms = smsRes.ok;
 
         // Store SMS in conversation history
         await sb.from("sms_conversations").insert({ tenant_id: wo.tenant_id, phone: toPhone, direction: "outbound", body: smsBody });
@@ -254,8 +267,8 @@ export async function GET(request: NextRequest) {
           });
 
           const vapiData = await vapiRes.json();
-          result.vapi = vapiRes.ok;
-          result.call_id = vapiData.id;
+          sendResult.vapi = vapiRes.ok;
+          sendResult.call_id = vapiData.id;
 
           await sb.from("sms_logs").insert({
             tenant_id: wo.tenant_id, recipient_phone: toPhone,
@@ -263,9 +276,12 @@ export async function GET(request: NextRequest) {
             twilio_message_id: vapiData.id || null,
           });
         } catch (err) {
-          result.vapi_error = (err as Error).message;
+          sendResult.vapi_error = (err as Error).message;
         }
       }
+
+      result.sends.push(sendResult);
+      } // end for-each phone
 
       // ── 3. Send Email via Resend ──
       const customerEmail = customer?.email;
