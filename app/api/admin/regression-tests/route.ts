@@ -245,16 +245,22 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // ─── TEST 7: Day off blocks the date ───
+      // ─── TEST 7: Day off blocks the date for a Repair Follow-up ───
+      // Diagnosis WOs would just route to another tech if the assigned one
+      // is off, which is correct. To verify day_off actually blocks, use a
+      // Repair Follow-up — those force the assigned tech (per book-appointment
+      // task #58), so an off day really does exclude the date.
       if (darryl) {
         const offDate = tomorrow(3);
         await addDayOff(darryl.id, offDate);
-        const { woId, woNumber } = await createTempCustomerAndWO("75034", "Dishwasher", "Diagnosis");
+        const { woId, woNumber } = await createTempCustomerAndWO("75034", "Dishwasher", "Repair Follow-up");
+        // assign the WO to Darryl so the repair-follow-up routing locks to him
+        await sb.from("work_orders").update({ assigned_technician_id: darryl.id }).eq("id", woId);
         const slots = await getSlots(woNumber);
         const dates = slots?.available_dates || [];
         const passed = !dates.includes(offDate);
         results.push({
-          name: `Darryl day off on ${offDate} → date excluded`,
+          name: `Darryl day off on ${offDate} → date excluded (Repair F/U assigned to Darryl)`,
           passed,
           expected: `${offDate} NOT in available dates`,
           actual: `available_dates=${JSON.stringify(dates.slice(0, 5))}`,
