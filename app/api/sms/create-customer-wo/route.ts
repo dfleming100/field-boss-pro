@@ -128,7 +128,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Need customer_name or existing_customer_id" }, { status: 400 });
     }
 
-    // Create work order
+    // If this customer already has an ACTIVE WO, reuse it instead of creating
+    // a duplicate. Only "open" statuses count — Complete/canceled don't.
+    // Saves us from spawning a new WO when an existing customer (recognized
+    // by phone or address+name) texts in about a job already in flight.
+    const ACTIVE_STATUSES = ["New Hold", "New", "Parts Needed", "Parts Ordered", "Parts Have Arrived", "Scheduled"];
+    const { data: activeWo } = await sb
+      .from("work_orders")
+      .select("id, work_order_number, appliance_type")
+      .eq("tenant_id", tenant_id || 1)
+      .eq("customer_id", customerId)
+      .in("status", ACTIVE_STATUSES)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (activeWo) {
+      // If the AI extracted an appliance and the existing WO doesn't have one,
+      // backfill it now so routing/SMS templates work.
+      if (appliance_type && !activeWo.appliance_type) {
+        await sb
+          .from("work_orders")
+          .update({ appliance_type })
+          .eq("id", activeWo.id);
+      }
+      return NextResponse.json({
+        success: true,
+        customer_id: customerId,
+        work_order_id: activeWo.id,
+        work_order_number: activeWo.work_order_number,
+        reused_existing_wo: true,
+      });
+    }
+
+    // No active WO — create a new one
     const woNumber = `WO-${Date.now().toString().slice(-6)}`;
     const { data: wo, error: woErr } = await sb
       .from("work_orders")
