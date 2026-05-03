@@ -210,8 +210,18 @@ export async function POST(request: NextRequest) {
     // 4. Take action
     let replyText = aiResult.reply;
 
-    // Handle new customer creation
-    if (aiResult.action === "new_customer" && aiResult.customer_name && aiResult.appliance_type) {
+    // Handle new customer creation OR existing-customer lookup-by-address.
+    // Trigger as soon as we have name plus (address OR zip). Appliance is no
+    // longer required because customers who say "I have a work order
+    // already" need us to LOOK THEM UP before they tell us the appliance.
+    // The server-side address+name match (in create-customer-wo) will:
+    //   - reuse an existing customer + active WO if one matches, OR
+    //   - create a fresh customer + WO (appliance optional, can backfill later)
+    if (
+      aiResult.action === "new_customer" &&
+      aiResult.customer_name &&
+      (aiResult.service_address || aiResult.zip)
+    ) {
       try {
         const createRes = await fetch(`${APP_URL}/api/sms/create-customer-wo`, {
           method: "POST",
@@ -224,19 +234,29 @@ export async function POST(request: NextRequest) {
             city: aiResult.city || "",
             state: aiResult.state || "",
             zip: aiResult.zip || "",
-            appliance_type: aiResult.appliance_type,
+            appliance_type: aiResult.appliance_type || "",
           }),
         });
         const createData = await createRes.json();
         if (createData.success) {
-          // Now get slots for the new WO
+          // Get slots for the matched/new WO
           const newSlotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ work_order_number: createData.work_order_number }),
           });
           const newSlots = await newSlotsRes.json();
-          replyText = aiResult.reply + (newSlots.agent_summary ? ` ${newSlots.agent_summary}` : "");
+
+          if (createData.reused_existing_wo) {
+            // We matched them to an existing customer's active WO — override
+            // the AIs new-customer reply with a recognition message.
+            const firstName = (aiResult.customer_name || "there").split(" ")[0];
+            replyText =
+              `Hi ${firstName} — I found your existing work order #${createData.work_order_number}. ` +
+              (newSlots.agent_summary || "Let me know what you need.");
+          } else {
+            replyText = aiResult.reply + (newSlots.agent_summary ? ` ${newSlots.agent_summary}` : "");
+          }
         }
       } catch {}
     }
@@ -581,13 +601,27 @@ CRITICAL — NEVER INVENT TIME WINDOWS, DATES, OR SCHEDULING INFO:
 - If SCHEDULING DATA is empty / missing / says "outside service area" / has no available dates, you MUST ask for their ZIP code first or say we can't schedule until you have one. NEVER make up "9am to 5pm" or "between 8 and 5" or any other window.
 
 ${isNewCustomer ? `
-NEW CUSTOMER FLOW:
-This person is NOT in our system. You need to collect their info to create an account and schedule them.
-- If they haven't provided their name yet, ask: "What is your name?"
-- If they haven't provided their address yet, ask: "What is your service address?"
-- If they haven't provided which appliance needs service, ask: "Which appliance needs service?"
-- Once you have name + address + appliance, return action "new_customer" with all the info.
-- Use conversation history to check if they already provided any of this info in previous messages.
+NEW CUSTOMER OR UNRECOGNIZED-PHONE FLOW:
+This person is not matched in our system by their phone number. They may be a brand-new customer OR an existing customer texting from a different phone (spouse's phone, work phone, etc).
+
+EXISTING-CUSTOMER SIGNALS — if the customer says ANY of these, treat as EXISTING and look them up by name + zip + address. Do NOT keep asking for appliance:
+  • "I have a work order"
+  • "my parts" / "are my parts in"
+  • "my repair" / "my service appointment"
+  • "follow-up" / "rescheduling"
+  • "I'm calling about my [appliance]"
+  • References to a specific job that already exists
+
+For these EXISTING-CUSTOMER signals:
+  1. Collect name + ZIP + address (in any order, can be in one message).
+  2. AS SOON AS you have name + (zip OR address), return action "new_customer" with whatever you have. Leave appliance_type as "" if they haven't told you yet — the server will look them up by name + address and skip the appliance question.
+  3. Do NOT keep asking "Which appliance" if they've told you they have an existing WO. The server will pull the appliance from the matched record.
+
+For BRAND-NEW customers (no existing-customer signals):
+  - Collect: name → service address (with ZIP) → which appliance.
+  - Once you have name + address + appliance, return action "new_customer" with all the info.
+
+Use conversation history to check if they already provided any info in previous messages. NEVER ask for the same field twice if they already gave it.
 ` : `
 EXISTING CUSTOMER — NEW APPLIANCE FLOW:
 If the customer asks about scheduling service for a DIFFERENT appliance than what is on their current work order, return action "new_wo" to create a new work order for the new appliance. Do NOT move their existing work order to a different appliance.
