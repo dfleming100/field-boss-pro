@@ -83,23 +83,54 @@ export async function POST(request: NextRequest) {
     const name = (args.name || "").trim();
     let tenantId = args.tenant_id || args.tenantId;
     if (!tenantId) {
-      const assistantId = raw.message?.call?.assistantId || raw.call?.assistantId || raw.metadata?.assistantId;
-      if (assistantId) {
+      // Vapi has shipped multiple payload shapes over time; check every
+      // place the assistantId / phoneNumberId might land. Tom Nolen's
+      // cancel test failed because the previous code only checked
+      // raw.message?.call?.assistantId and Vapi's current payload puts
+      // it elsewhere — leading to a "tenant could not be identified"
+      // even though the assistant IS configured for tenant 1.
+      const assistantId =
+        raw.message?.call?.assistantId
+        || raw.message?.call?.assistant?.id
+        || raw.message?.assistant?.id
+        || raw.message?.assistantId
+        || raw.call?.assistantId
+        || raw.call?.assistant?.id
+        || raw.assistantId
+        || raw.metadata?.assistantId;
+      const phoneNumberId =
+        raw.message?.call?.phoneNumberId
+        || raw.message?.phoneNumberId
+        || raw.message?.phoneNumber?.id
+        || raw.call?.phoneNumberId
+        || raw.phoneNumberId;
+
+      if (assistantId || phoneNumberId) {
         const sb2 = supabaseAdmin();
         const { data: allVapi } = await sb2
           .from("tenant_integrations")
           .select("tenant_id, encrypted_keys")
           .eq("integration_type", "vapi")
           .eq("is_configured", true);
-        const match = (allVapi || []).find((v: any) => v.encrypted_keys?.assistantId === assistantId);
+        // Try assistantId first (most specific), then phoneNumberId as fallback.
+        const match = (allVapi || []).find((v: any) => {
+          const keys = v.encrypted_keys || {};
+          return (assistantId && keys.assistantId === assistantId)
+              || (phoneNumberId && keys.phoneNumberId === phoneNumberId);
+        });
         if (match) tenantId = match.tenant_id;
+      }
+
+      // Last resort: log everything we got so the next debug session is shorter.
+      if (!tenantId) {
+        console.error(
+          `[customer-lookup] Could not resolve tenant. assistantId=${assistantId} phoneNumberId=${phoneNumberId} ` +
+          `payload-keys=${Object.keys(raw).join(",")} message-keys=${Object.keys(raw.message || {}).join(",")} ` +
+          `call-keys=${Object.keys(raw.message?.call || {}).join(",")}`
+        );
       }
     }
     if (!tenantId) {
-      // No silent default to tenant 1 — the moment a second tenant onboards,
-      // an unresolved Vapi assistantId would leak that tenant's customers
-      // into Fleming's account. Fail loud instead.
-      console.error(`[customer-lookup] Could not resolve tenant_id (assistantId not matched, no tenant_id arg)`);
       return wrapResponse(toolCallId, {
         found: false,
         message: "Internal configuration error: tenant could not be identified. Please contact support.",
