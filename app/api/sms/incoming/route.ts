@@ -18,6 +18,62 @@ import { sendExpoPush } from "@/lib/expo-push";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://field-boss-pro.vercel.app";
 
+const MONTH_NAMES = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
+];
+
+// Single source of truth for fetching available slots. Built-in retry handles
+// transient blips (network, race with concurrent booking) — Bahram's bug
+// happened because the second slots fetch in a turn came back empty even
+// though the endpoint was healthy.
+async function fetchSlots(woNumber: string): Promise<any> {
+  const doFetch = async () => {
+    const res = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ work_order_number: woNumber }),
+    });
+    return res.json();
+  };
+  try {
+    const first = await doFetch();
+    if (first?.available_dates?.length > 0) return first;
+    // Empty or error — wait briefly and retry once
+    await new Promise((r) => setTimeout(r, 300));
+    const second = await doFetch();
+    return second?.available_dates?.length > 0 ? second : first;
+  } catch {
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      return await doFetch();
+    } catch {
+      return null;
+    }
+  }
+}
+
+// Single source of truth for "we couldn't book that date" replies.
+// Three call sites used to duplicate this template, each with their own
+// empty-list bug. One helper, one fix.
+function formatNotAvailableReply(opts: {
+  intro: string;
+  availDates: string[];
+  companyPhone: string;
+  showMoreSuffix?: boolean;
+}): string {
+  const first3 = (opts.availDates || []).slice(0, 3);
+  if (first3.length === 0) {
+    return `${opts.intro} Please call us at ${opts.companyPhone || "the office"} and we'll get you scheduled.`;
+  }
+  const fmtDates = first3.map((d: string) => {
+    const dt = new Date(d + "T12:00:00");
+    return `${MONTH_NAMES[dt.getMonth()]} ${dt.getDate()}`;
+  }).join(", ");
+  const suffix = opts.showMoreSuffix ? " We have more dates available after that as well." : "";
+  return `${opts.intro} We have openings on ${fmtDates}.${suffix} Which day works for you?`;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -200,12 +256,7 @@ export async function POST(request: NextRequest) {
     // 2. Always fetch available slots so Claude has full context for any request
     let slotsData: any = null;
     if (customerData.found && customerData.active_wo?.wo_number) {
-      const slotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ work_order_number: customerData.active_wo.wo_number }),
-      });
-      slotsData = await slotsRes.json();
+      slotsData = await fetchSlots(customerData.active_wo.wo_number);
     }
 
     // 3. Build Claude prompt and get intent (with conversation history)
@@ -247,12 +298,7 @@ export async function POST(request: NextRequest) {
           replyText = `I couldn't find an existing record at that address. To set you up, what is your name?`;
         }
         else if (createData.success) {
-          const newSlotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ work_order_number: createData.work_order_number }),
-          });
-          const newSlots = await newSlotsRes.json();
+          const newSlots = await fetchSlots(createData.work_order_number);
 
           if (createData.reused_existing_wo) {
             // Pull customer details for personalized recognition
@@ -287,13 +333,8 @@ export async function POST(request: NextRequest) {
         });
         const createData = await createRes.json();
         if (createData.success) {
-          const newSlotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ work_order_number: createData.work_order_number }),
-          });
-          const newSlots = await newSlotsRes.json();
-          replyText = aiResult.reply + (newSlots.agent_summary ? ` ${newSlots.agent_summary}` : "");
+          const newSlots = await fetchSlots(createData.work_order_number);
+          replyText = aiResult.reply + (newSlots?.agent_summary ? ` ${newSlots.agent_summary}` : "");
         }
       } catch {}
     }
@@ -318,36 +359,18 @@ export async function POST(request: NextRequest) {
         });
         const bookData = await bookRes.json();
         if (!bookData.success) {
-          // Use the specific failure message from book-appointment instead of
-          // pasting the agent_summary, which contradicts the "not available" line.
-          const reason = bookData.message || "We could not confirm that date.";
-          const first3 = availDates.slice(0, 3);
-          if (first3.length === 0) {
-            replyText = `${reason} Please call us at ${tenantInfo.phone || "the office"} and we'll find a time that works.`;
-          } else {
-            const fmtDates = first3.map((d: string) => {
-              const dt = new Date(d + "T12:00:00");
-              const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-              return `${months[dt.getMonth()]} ${dt.getDate()}`;
-            }).join(", ");
-            replyText = `${reason} We have openings on ${fmtDates}. Which day works for you?`;
-          }
+          replyText = formatNotAvailableReply({
+            intro: bookData.message || "We could not confirm that date.",
+            availDates,
+            companyPhone: tenantInfo.phone,
+          });
         }
       } else {
-        // Date not in available list — override with info.
-        // If availDates is empty (slot fetch failed or tech is fully booked),
-        // do NOT emit "openings on ." — fall back to a graceful ask-to-call.
-        const first3 = availDates.slice(0, 3);
-        if (first3.length === 0) {
-          replyText = `Sorry, I can't pull availability right now. Please call us at ${tenantInfo.phone || "the office"} and we'll get you scheduled.`;
-        } else {
-          const fmtDates = first3.map((d: string) => {
-            const dt = new Date(d + "T12:00:00");
-            const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-            return `${months[dt.getMonth()]} ${dt.getDate()}`;
-          }).join(", ");
-          replyText = `Sorry, that date is not available. We have openings on ${fmtDates}. Which day works for you?`;
-        }
+        replyText = formatNotAvailableReply({
+          intro: "Sorry, that date is not available.",
+          availDates,
+          companyPhone: tenantInfo.phone,
+        });
       }
     }
 
@@ -862,23 +885,14 @@ Return ONLY valid JSON.`;
     if (parsed.action === "book" && parsed.chosen_date) {
       const availDates = slots?.available_dates || [];
       if (!availDates.includes(parsed.chosen_date)) {
-        const first3 = availDates.slice(0, 3);
-        if (first3.length === 0) {
-          // No availability returned (slot fetch failed or fully booked).
-          // Don't emit "openings on ." — fall back gracefully.
-          return {
-            action: "info",
-            reply: `Sorry, I can't pull availability right now. Please call us at ${companyPhone} and we'll get you scheduled.`,
-          };
-        }
-        const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-        const dateStr = first3.map((d: string) => {
-          const dt = new Date(d + "T12:00:00");
-          return `${months[dt.getMonth()]} ${dt.getDate()}`;
-        }).join(", ");
         return {
           action: "info",
-          reply: `Sorry, that date is not available. We have openings on ${dateStr}. We have more dates available after that as well. Which day works for you?`,
+          reply: formatNotAvailableReply({
+            intro: "Sorry, that date is not available.",
+            availDates,
+            companyPhone,
+            showMoreSuffix: true,
+          }),
         };
       }
     }
