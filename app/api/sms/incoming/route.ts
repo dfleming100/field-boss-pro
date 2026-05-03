@@ -58,8 +58,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (!tenantId) {
-      console.error(`[SMS] No tenant found for To number: ${to}`);
-      tenantId = 1; // fallback
+      // No fallback — replying as the wrong tenant is a worse outcome than
+      // not replying. Twilio will retry; ops will see the error log. The
+      // moment a second tenant goes live, default-to-1 would route their
+      // customer's text into Fleming's account.
+      console.error(`[SMS] No tenant found for To number: ${to} — dropping inbound`);
+      return NextResponse.json({ ok: true, ignored: "no_tenant_for_to_number" });
     }
 
     // Fetch tenant info for dynamic prompt

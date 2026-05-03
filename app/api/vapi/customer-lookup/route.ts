@@ -95,7 +95,16 @@ export async function POST(request: NextRequest) {
         if (match) tenantId = match.tenant_id;
       }
     }
-    if (!tenantId) tenantId = 1;
+    if (!tenantId) {
+      // No silent default to tenant 1 — the moment a second tenant onboards,
+      // an unresolved Vapi assistantId would leak that tenant's customers
+      // into Fleming's account. Fail loud instead.
+      console.error(`[customer-lookup] Could not resolve tenant_id (assistantId not matched, no tenant_id arg)`);
+      return wrapResponse(toolCallId, {
+        found: false,
+        message: "Internal configuration error: tenant could not be identified. Please contact support.",
+      });
+    }
 
     const sb = supabaseAdmin();
 
