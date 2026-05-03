@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { ClipboardList, Flame, CalendarDays, MessageCircle, Gauge, Package, RefreshCw, DollarSign, Receipt, UserCheck, TrendingUp, AlertTriangle } from "lucide-react";
+import { ClipboardList, Flame, CalendarDays, MessageCircle, Gauge, Package, RefreshCw, DollarSign, Receipt, UserCheck, TrendingUp, AlertTriangle, Wrench } from "lucide-react";
 import BossTile from "@/app/components/BossTile";
 
 type WORow = {
@@ -136,6 +136,7 @@ export default function BossBoardPage() {
   const { tenantUser } = useAuth();
 
   const [unscheduled, setUnscheduled] = useState<WORow[]>([]);
+  const [unscheduledRepairs, setUnscheduledRepairs] = useState<WORow[]>([]);
   const [hotList, setHotList] = useState<WORow[]>([]);
   const [todaySched, setTodaySched] = useState<TodayApptByTech[]>([]);
   const [outreach, setOutreach] = useState<OutreachBuckets>({ never: 0, cold: 0, replied_unbooked: 0, booked: 0 });
@@ -147,7 +148,7 @@ export default function BossBoardPage() {
   const [velocity, setVelocity] = useState<SourceVelocityRow[]>([]);
   const [watchlist, setWatchlist] = useState<WatchlistRow[]>([]);
 
-  const [loading, setLoading] = useState({ u: true, h: true, t: true, o: true, c: true, p: true, r: true, a: true, ac: true, v: true, w: true });
+  const [loading, setLoading] = useState({ u: true, ur: true, h: true, t: true, o: true, c: true, p: true, r: true, a: true, ac: true, v: true, w: true });
   const [errors, setErrors] = useState<{ [k: string]: string | null }>({});
   const [refreshedAt, setRefreshedAt] = useState<Date>(new Date());
 
@@ -179,6 +180,42 @@ export default function BossBoardPage() {
       setErrors((er) => ({ ...er, u: (e as Error).message }));
     } finally {
       setLoading((s) => ({ ...s, u: false }));
+    }
+  }, [tenantUser]);
+
+  // ── Tile 1b: Unscheduled Repair Follow-ups ──────────────────────────────
+  // Different lens from Hot List: ALL Repair Follow-ups in any non-terminal
+  // status that have no scheduled appointment yet, not just the
+  // Parts-Have-Arrived-3-days-stuck subset. Catches the early-stage ones
+  // (Parts Ordered) before they become Hot List items.
+  const fetchUnscheduledRepairs = useCallback(async () => {
+    if (!tenantUser) return;
+    setLoading((s) => ({ ...s, ur: true }));
+    try {
+      const { data, error } = await supabase
+        .from("work_orders")
+        .select(`id, work_order_number, appliance_type, status, status_changed_at, created_at, outreach_count,
+          customer:customers(customer_name), appointments(id, status)`)
+        .eq("tenant_id", tenantUser.tenant_id)
+        .eq("job_type", "Repair Follow-up")
+        .in("status", ["New", "Parts Ordered", "Parts Have Arrived", "Parts Needed"])
+        .order("status_changed_at", { ascending: true });
+      if (error) throw error;
+      const filtered: WORow[] = (data || [])
+        .filter((wo: any) => !(wo.appointments || []).some((a: any) => a.status === "scheduled"))
+        .map((wo: any) => ({
+          id: wo.id, work_order_number: wo.work_order_number,
+          customer_name: wo.customer?.customer_name || "—",
+          appliance_type: wo.appliance_type, status: wo.status,
+          status_changed_at: wo.status_changed_at, created_at: wo.created_at,
+          outreach_count: wo.outreach_count,
+        }));
+      setUnscheduledRepairs(filtered);
+      setErrors((e) => ({ ...e, ur: null }));
+    } catch (e) {
+      setErrors((er) => ({ ...er, ur: (e as Error).message }));
+    } finally {
+      setLoading((s) => ({ ...s, ur: false }));
     }
   }, [tenantUser]);
 
@@ -654,12 +691,12 @@ export default function BossBoardPage() {
   }, [tenantUser]);
 
   const refreshAll = useCallback(() => {
-    fetchUnscheduled(); fetchHotList(); fetchTodaySchedule();
+    fetchUnscheduled(); fetchUnscheduledRepairs(); fetchHotList(); fetchTodaySchedule();
     fetchOutreach(); fetchCapacity(); fetchParts();
     fetchRevenue(); fetchAR(); fetchAltContacts(); fetchVelocity();
     fetchWatchlist();
     setRefreshedAt(new Date());
-  }, [fetchUnscheduled, fetchHotList, fetchTodaySchedule, fetchOutreach, fetchCapacity, fetchParts, fetchRevenue, fetchAR, fetchAltContacts, fetchVelocity, fetchWatchlist]);
+  }, [fetchUnscheduled, fetchUnscheduledRepairs, fetchHotList, fetchTodaySchedule, fetchOutreach, fetchCapacity, fetchParts, fetchRevenue, fetchAR, fetchAltContacts, fetchVelocity, fetchWatchlist]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -734,6 +771,34 @@ export default function BossBoardPage() {
             ))}
           </ul>
           {unscheduled.length > 5 && <div className="text-xs text-slate-500 mt-2">+ {unscheduled.length - 5} more</div>}
+        </BossTile>
+
+        {/* Unscheduled Repair Follow-ups */}
+        <BossTile
+          title="Unscheduled Repair F/U" icon={Wrench} accent="violet"
+          count={unscheduledRepairs.length}
+          loading={loading.ur} error={errors.ur}
+          empty={unscheduledRepairs.length === 0}
+          emptyText="All Repair Follow-ups are scheduled."
+          footer="Any status (parts ordered/arrived/needed) with no appointment"
+        >
+          <ul className="text-sm divide-y divide-slate-100">
+            {unscheduledRepairs.slice(0, 5).map((wo) => (
+              <li key={wo.id} className="py-2 flex items-center justify-between gap-2">
+                <Link href={`/jobs/${wo.id}`} className="min-w-0 flex-1 hover:text-violet-700">
+                  <div className="font-medium text-slate-800 truncate">{wo.customer_name}</div>
+                  <div className="text-xs text-slate-500 truncate">
+                    #{wo.work_order_number}{wo.appliance_type && ` · ${wo.appliance_type}`} · {wo.status}
+                  </div>
+                </Link>
+                <div className="text-right shrink-0">
+                  <div className="text-xs font-medium text-slate-700">{daysAgo(wo.status_changed_at)}d</div>
+                  <div className="text-[10px] text-slate-400">in status</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {unscheduledRepairs.length > 5 && <div className="text-xs text-slate-500 mt-2">+ {unscheduledRepairs.length - 5} more</div>}
         </BossTile>
 
         {/* Hot List */}
