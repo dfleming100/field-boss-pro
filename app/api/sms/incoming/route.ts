@@ -661,8 +661,12 @@ EXISTING APPOINTMENT:
 ${slots ? `SCHEDULING DATA:
 - Tech: ${slots.tech_name || ""}
 - Time Window: ${slots.window_start || ""} to ${slots.window_end || ""}
-- Available Dates: ${(slots.available_dates || []).join(", ")}
+- Available Dates (YYYY-MM-DD with day-of-week — DO NOT recompute, use exactly as written): ${(slots.available_dates || []).map((ds: string) => {
+  const dt = new Date(ds + "T12:00:00Z");
+  return `${ds} (${dayNames[dt.getUTCDay()]})`;
+}).join(", ")}
 - Agent Summary: ${slots.agent_summary || ""}
+RULE: When the customer names a weekday (e.g. "Friday", "next Monday"), pick the matching date from the Available Dates list above by day-of-week annotation. If no date in the list matches that weekday, the answer is "we don't have availability that day" — offer the nearest Available Dates instead. NEVER invent a date that isn't in the list.
 ` : ""}
 CONVERSATION CONTEXT:
 Use the conversation history above to understand follow-up messages. If the customer says "yes", "the 7th", "ok", etc., look at what ${companyName} last said to understand what they are responding to.
