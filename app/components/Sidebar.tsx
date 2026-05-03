@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
+import { useTenantPlan } from "@/lib/useTenantPlan";
 import {
   Home,
   Funnel,
@@ -60,11 +61,29 @@ interface SidebarProps {
 export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
   const { tenantUser } = useAuth();
+  const { isPaid } = useTenantPlan();
   const isTech = tenantUser?.role === "technician";
-  const visibleNavItems = navItems.filter((item) => !(isTech && item.techHidden));
+
+  // Tier-gated Home swap:
+  //   Paid plans → Home points at /boss-board, the standalone Boss Board nav
+  //                item disappears (it IS Home now, no need to list twice)
+  //   Free plans → Home stays /dashboard, Boss Board entirely hidden
+  // Techs always get the basic dashboard regardless of tier — they don't
+  // need the ops view.
+  const showBossBoardAsHome = isPaid && !isTech;
+  const visibleNavItems = navItems
+    .filter((item) => !(isTech && item.techHidden))
+    .filter((item) => item.href !== "/boss-board") // never show as separate item; merged with Home below
+    .map((item) => {
+      if (item.href === "/dashboard" && showBossBoardAsHome) {
+        return { ...item, href: "/boss-board" };
+      }
+      return item;
+    });
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";
+    if (href === "/boss-board") return pathname === "/boss-board";
     return pathname.startsWith(href);
   };
 
