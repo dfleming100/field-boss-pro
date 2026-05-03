@@ -28,7 +28,26 @@ import {
   X,
   Trash2,
   Pencil,
+  Paperclip,
+  File as FileIcon,
+  FileImage,
+  Download,
+  Upload,
 } from "lucide-react";
+
+const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "svg"]);
+function fileExt(name: string): string {
+  return (name.split(".").pop() || "").toLowerCase();
+}
+function isImageFile(name: string): boolean {
+  return IMAGE_EXTS.has(fileExt(name));
+}
+function fmtBytes(b: number | null | undefined): string {
+  if (!b) return "";
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
   "New Hold": { label: "New Hold", bg: "bg-slate-100", text: "text-slate-700", dot: "bg-slate-500" },
@@ -919,11 +938,11 @@ export default function WorkOrderDetailPage() {
                   />
                 </label>
               </div>
-              {photos.length === 0 ? (
+              {photos.filter((p: any) => isImageFile(p.file_name || "")).length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-3 bg-gray-50 rounded-lg border border-dashed border-gray-300">No photos yet</p>
               ) : (
                 <div className="grid grid-cols-3 gap-2">
-                  {photos.map((photo: any) => (
+                  {photos.filter((p: any) => isImageFile(p.file_name || "")).map((photo: any) => (
                     <div key={photo.id} className="relative group">
                       <img
                         src={photo.file_url}
@@ -1389,6 +1408,116 @@ export default function WorkOrderDetailPage() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Attachments — full-width at bottom of page. Accepts ANY file type
+          (photos, PDFs, parts invoices, warranty docs, etc). Reuses the
+          work_order_photos table since its columns (file_url, file_name)
+          are generic — only the table name is photo-specific. */}
+      <div className="max-w-7xl mx-auto px-6 pb-8">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Paperclip size={18} className="text-gray-500" />
+              <h2 className="text-base font-semibold text-gray-900">Attachments</h2>
+              <span className="text-xs text-gray-400">({photos.length})</span>
+            </div>
+            <label className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 cursor-pointer">
+              <Upload size={16} />
+              Upload File
+              <input
+                type="file"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  // 25 MB cap is what Supabase storage default allows.
+                  if (file.size > 25 * 1024 * 1024) {
+                    setError("File too large — 25 MB max.");
+                    return;
+                  }
+                  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+                  const fileName = `${workOrderId}/${Date.now()}-${safeName}`;
+                  const { error: uploadErr } = await supabase.storage
+                    .from("work-order-photos")
+                    .upload(fileName, file, { contentType: file.type || undefined });
+                  if (uploadErr) { setError("Upload failed: " + uploadErr.message); return; }
+                  const { data: urlData } = supabase.storage
+                    .from("work-order-photos")
+                    .getPublicUrl(fileName);
+                  await supabase.from("work_order_photos").insert({
+                    work_order_id: parseInt(workOrderId),
+                    tenant_id: tenantUser?.tenant_id,
+                    file_url: urlData.publicUrl,
+                    file_name: file.name,
+                  });
+                  e.target.value = ""; // allow re-upload of same name
+                  fetchPhotos();
+                }}
+              />
+            </label>
+          </div>
+
+          {photos.length === 0 ? (
+            <div className="text-sm text-gray-400 text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+              No attachments yet. Drag and drop or click <strong className="text-indigo-600">Upload File</strong> to add photos, PDFs, parts invoices, warranty docs, etc.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {photos.map((att: any) => {
+                const img = isImageFile(att.file_name || "");
+                return (
+                  <div key={att.id} className="relative group border border-gray-200 rounded-lg overflow-hidden bg-white">
+                    {img ? (
+                      <img
+                        src={att.file_url}
+                        alt={att.file_name || "Attachment"}
+                        onClick={() => setViewerPhoto(att.file_url)}
+                        className="w-full h-28 object-cover cursor-pointer hover:opacity-90 transition"
+                      />
+                    ) : (
+                      <a
+                        href={att.file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex flex-col items-center justify-center h-28 bg-gray-50 hover:bg-gray-100 transition"
+                      >
+                        <FileIcon size={32} className="text-gray-400" />
+                        <span className="text-[10px] uppercase text-gray-500 mt-1 font-semibold">{fileExt(att.file_name || "") || "FILE"}</span>
+                      </a>
+                    )}
+                    <div className="px-2 py-1.5 border-t border-gray-100">
+                      <div className="text-xs text-gray-700 truncate" title={att.file_name}>
+                        {att.file_name || "Untitled"}
+                      </div>
+                      <div className="flex items-center justify-between mt-0.5">
+                        <a
+                          href={att.file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          download={att.file_name}
+                          className="text-[10px] text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5"
+                        >
+                          <Download size={10} /> Download
+                        </a>
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Delete "${att.file_name}"?`)) return;
+                            await supabase.from("work_order_photos").delete().eq("id", att.id);
+                            fetchPhotos();
+                          }}
+                          className="text-[10px] text-red-600 hover:text-red-800"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
