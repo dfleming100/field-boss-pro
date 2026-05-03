@@ -141,42 +141,33 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fallback: search by phone (try multiple formats)
-    // Match against BOTH phone and phone2 — many customers text from a
-    // different cell than the landline on file.
+    // Fallback: search by phone — match against BOTH phone and phone2.
+    // Only the LAST 10 (or last 7) digits are used, and we compare full
+    // contiguous tail — not arbitrary substring. Last-4 ILIKE was previously
+    // matching unrelated customers whose number happened to contain those
+    // digits in the middle (e.g. last4=9972 hit 334-66997-29). Fixed.
     if (!customer && phone.length >= 7) {
+      const last10 = phone.slice(-10);
       const last7 = phone.slice(-7);
-      const last4 = phone.slice(-4);
-      // Try with raw digits across both phone columns
+      // Pull a small candidate set by last 7 (cheap pre-filter), then
+      // verify the full tail in JS by stripping non-digits.
       const { data } = await sb
         .from("customers")
         .select("*")
         .eq("tenant_id", tenantId)
-        .or(
-          `phone.ilike.%${last7}%,phone.ilike.%${last4}%,` +
-          `phone2.ilike.%${last7}%,phone2.ilike.%${last4}%`
-        )
-        .limit(5);
+        .or(`phone.ilike.%${last7}%,phone2.ilike.%${last7}%`)
+        .limit(10);
 
-      // If multiple results from last4, try to narrow down
-      if (data?.length === 1) {
-        customer = data[0];
-      } else if (data && data.length > 1) {
-        // Check if any phone matches when digits-only compared
-        const match = data.find((c: any) => {
-          const dbDigits = (c.phone || "").replace(/\D/g, "");
-          const dbDigits2 = (c.phone2 || "").replace(/\D/g, "");
-          return (
-            dbDigits.includes(phone.slice(-7)) ||
-            phone.includes(dbDigits.slice(-7)) ||
-            dbDigits2.includes(phone.slice(-7)) ||
-            phone.includes(dbDigits2.slice(-7))
-          );
-        });
-        if (match) customer = match;
-        else customer = data[0];
-      }
-      if (data?.length) customer = data[0];
+      const tailMatch = (val: string | null | undefined): boolean => {
+        const d = (val || "").replace(/\D/g, "");
+        if (!d) return false;
+        if (last10.length === 10 && d.endsWith(last10)) return true;
+        if (d.endsWith(last7) && phone.endsWith(d.slice(-7))) return true;
+        return false;
+      };
+
+      const verified = (data || []).find((c: any) => tailMatch(c.phone) || tailMatch(c.phone2));
+      if (verified) customer = verified;
     }
 
     // Fallback: maybe this number is an alt_contact on someone else's WO
