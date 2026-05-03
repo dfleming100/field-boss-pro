@@ -322,22 +322,32 @@ export async function POST(request: NextRequest) {
           // pasting the agent_summary, which contradicts the "not available" line.
           const reason = bookData.message || "We could not confirm that date.";
           const first3 = availDates.slice(0, 3);
+          if (first3.length === 0) {
+            replyText = `${reason} Please call us at ${tenantInfo.phone || "the office"} and we'll find a time that works.`;
+          } else {
+            const fmtDates = first3.map((d: string) => {
+              const dt = new Date(d + "T12:00:00");
+              const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+              return `${months[dt.getMonth()]} ${dt.getDate()}`;
+            }).join(", ");
+            replyText = `${reason} We have openings on ${fmtDates}. Which day works for you?`;
+          }
+        }
+      } else {
+        // Date not in available list — override with info.
+        // If availDates is empty (slot fetch failed or tech is fully booked),
+        // do NOT emit "openings on ." — fall back to a graceful ask-to-call.
+        const first3 = availDates.slice(0, 3);
+        if (first3.length === 0) {
+          replyText = `Sorry, I can't pull availability right now. Please call us at ${tenantInfo.phone || "the office"} and we'll get you scheduled.`;
+        } else {
           const fmtDates = first3.map((d: string) => {
             const dt = new Date(d + "T12:00:00");
             const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
             return `${months[dt.getMonth()]} ${dt.getDate()}`;
           }).join(", ");
-          replyText = `${reason} We have openings on ${fmtDates}. Which day works for you?`;
+          replyText = `Sorry, that date is not available. We have openings on ${fmtDates}. Which day works for you?`;
         }
-      } else {
-        // Date not in available list — override with info
-        const first3 = availDates.slice(0, 3);
-        const fmtDates = first3.map((d: string) => {
-          const dt = new Date(d + "T12:00:00");
-          const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-          return `${months[dt.getMonth()]} ${dt.getDate()}`;
-        }).join(", ");
-        replyText = `Sorry, that date is not available. We have openings on ${fmtDates}. Which day works for you?`;
       }
     }
 
@@ -853,6 +863,14 @@ Return ONLY valid JSON.`;
       const availDates = slots?.available_dates || [];
       if (!availDates.includes(parsed.chosen_date)) {
         const first3 = availDates.slice(0, 3);
+        if (first3.length === 0) {
+          // No availability returned (slot fetch failed or fully booked).
+          // Don't emit "openings on ." — fall back gracefully.
+          return {
+            action: "info",
+            reply: `Sorry, I can't pull availability right now. Please call us at ${companyPhone} and we'll get you scheduled.`,
+          };
+        }
         const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
         const dateStr = first3.map((d: string) => {
           const dt = new Date(d + "T12:00:00");
