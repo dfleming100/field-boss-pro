@@ -18,6 +18,7 @@ import {
   HelpCircle,
   Wrench,
   MessageSquare,
+  LayoutDashboard,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -31,6 +32,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: "Home", href: "/dashboard", icon: Home },
+  { label: "Boss Board", href: "/boss-board", icon: LayoutDashboard, techHidden: true },
   { label: "Leads", href: "/leads", icon: Funnel, techHidden: true },
   { label: "Customers", href: "/customers", icon: Users },
   { label: "Technicians", href: "/people", icon: Wrench, techHidden: true },
