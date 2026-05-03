@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { ClipboardList, Flame, CalendarDays, MessageCircle, Gauge, Package, RefreshCw } from "lucide-react";
+import { ClipboardList, Flame, CalendarDays, MessageCircle, Gauge, Package, RefreshCw, DollarSign, Receipt, UserCheck, TrendingUp } from "lucide-react";
 import BossTile from "@/app/components/BossTile";
 
 type WORow = {
@@ -48,7 +48,51 @@ type PartsRow = {
   arrived_avg_days: number;
 };
 
+type RevenueRow = { today: number; week: number; month: number };
+
+type ARRow = {
+  bucket_0_30: number; count_0_30: number;
+  bucket_31_60: number; count_31_60: number;
+  bucket_60_plus: number; count_60_plus: number;
+  total_outstanding: number;
+};
+
+type AltContactRow = {
+  wo_id: number;
+  wo_number: string;
+  customer_name: string;
+  alt_contact_name: string;
+  alt_contact_phone: string;
+  alt_contact_relationship: string | null;
+  appliance_type: string | null;
+  hours_since: number;
+};
+
+type SourceVelocityRow = { source: string; today: number; week: number };
+
 const HOT_DAYS_THRESHOLD = 3;
+
+function fmtMoney(cents: number): string {
+  // total is stored as numeric (dollars), not cents
+  return `$${cents.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+function hoursAgo(iso: string | null): number {
+  if (!iso) return 0;
+  const ms = Date.now() - new Date(iso).getTime();
+  return Math.floor(ms / 3600000);
+}
+
+function normalizeSource(source: string | null, warranty: string | null): string {
+  const s = (source || warranty || "").trim().toLowerCase();
+  if (!s) return "Direct";
+  if (s.includes("ahs")) return "AHS";
+  if (s.includes("fahw") || s.includes("first american")) return "FAHW";
+  if (s.includes("walk")) return "Walk-in";
+  if (s.includes("google") || s.includes("web")) return "Google";
+  if (s.includes("referral")) return "Referral";
+  return source || warranty || "Direct";
+}
 
 function daysAgo(iso: string | null): number {
   if (!iso) return 0;
@@ -84,8 +128,12 @@ export default function BossBoardPage() {
   const [outreach, setOutreach] = useState<OutreachBuckets>({ never: 0, cold: 0, replied_unbooked: 0, booked: 0 });
   const [capacity, setCapacity] = useState<CapacityRow[]>([]);
   const [parts, setParts] = useState<PartsRow>({ ordered_count: 0, ordered_avg_days: 0, arrived_count: 0, arrived_avg_days: 0 });
+  const [revenue, setRevenue] = useState<RevenueRow>({ today: 0, week: 0, month: 0 });
+  const [ar, setAr] = useState<ARRow>({ bucket_0_30: 0, count_0_30: 0, bucket_31_60: 0, count_31_60: 0, bucket_60_plus: 0, count_60_plus: 0, total_outstanding: 0 });
+  const [altContacts, setAltContacts] = useState<AltContactRow[]>([]);
+  const [velocity, setVelocity] = useState<SourceVelocityRow[]>([]);
 
-  const [loading, setLoading] = useState({ u: true, h: true, t: true, o: true, c: true, p: true });
+  const [loading, setLoading] = useState({ u: true, h: true, t: true, o: true, c: true, p: true, r: true, a: true, ac: true, v: true });
   const [errors, setErrors] = useState<{ [k: string]: string | null }>({});
   const [refreshedAt, setRefreshedAt] = useState<Date>(new Date());
 
@@ -331,11 +379,160 @@ export default function BossBoardPage() {
     }
   }, [tenantUser]);
 
+  // ── Tile 7: Revenue Today / Week / Month ────────────────────────────────
+  const fetchRevenue = useCallback(async () => {
+    if (!tenantUser) return;
+    setLoading((s) => ({ ...s, r: true }));
+    try {
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("total, paid_at")
+        .eq("tenant_id", tenantUser.tenant_id)
+        .not("paid_at", "is", null)
+        .gte("paid_at", startOfMonth);
+      if (error) throw error;
+
+      const today = todayCT();
+      const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+      let t = 0, w = 0, m = 0;
+      for (const inv of (data || []) as any[]) {
+        const total = Number(inv.total || 0);
+        m += total;
+        if (inv.paid_at >= weekAgo) w += total;
+        const paidDay = new Date(inv.paid_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+        if (paidDay === today) t += total;
+      }
+      setRevenue({ today: t, week: w, month: m });
+      setErrors((e) => ({ ...e, r: null }));
+    } catch (e) {
+      setErrors((er) => ({ ...er, r: (e as Error).message }));
+    } finally {
+      setLoading((s) => ({ ...s, r: false }));
+    }
+  }, [tenantUser]);
+
+  // ── Tile 8: A/R Aging ───────────────────────────────────────────────────
+  const fetchAR = useCallback(async () => {
+    if (!tenantUser) return;
+    setLoading((s) => ({ ...s, a: true }));
+    try {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("total, amount_paid, created_at, status")
+        .eq("tenant_id", tenantUser.tenant_id);
+      if (error) throw error;
+
+      const buckets = { bucket_0_30: 0, count_0_30: 0, bucket_31_60: 0, count_31_60: 0, bucket_60_plus: 0, count_60_plus: 0, total_outstanding: 0 };
+      for (const inv of (data || []) as any[]) {
+        const owed = Number(inv.total || 0) - Number(inv.amount_paid || 0);
+        if (owed <= 0) continue;
+        const days = daysAgo(inv.created_at);
+        buckets.total_outstanding += owed;
+        if (days <= 30) { buckets.bucket_0_30 += owed; buckets.count_0_30++; }
+        else if (days <= 60) { buckets.bucket_31_60 += owed; buckets.count_31_60++; }
+        else { buckets.bucket_60_plus += owed; buckets.count_60_plus++; }
+      }
+      setAr(buckets);
+      setErrors((e) => ({ ...e, a: null }));
+    } catch (e) {
+      setErrors((er) => ({ ...er, a: (e as Error).message }));
+    } finally {
+      setLoading((s) => ({ ...s, a: false }));
+    }
+  }, [tenantUser]);
+
+  // ── Tile 9: Alt-Contact Handoffs Awaiting Reply ─────────────────────────
+  const fetchAltContacts = useCallback(async () => {
+    if (!tenantUser) return;
+    setLoading((s) => ({ ...s, ac: true }));
+    try {
+      const { data: wos, error } = await supabase
+        .from("work_orders")
+        .select(`id, work_order_number, appliance_type, alt_contact_name, alt_contact_phone, alt_contact_relationship, status, updated_at,
+          customer:customers(customer_name)`)
+        .eq("tenant_id", tenantUser.tenant_id)
+        .not("alt_contact_phone", "is", null)
+        .not("status", "in", '("Complete","canceled")')
+        .order("updated_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+
+      // Filter to only those whose alt-contact hasn't replied yet (no inbound from that number).
+      const altPhones = (wos || []).map((w: any) => w.alt_contact_phone).filter(Boolean);
+      const repliedSet = new Set<string>();
+      if (altPhones.length > 0) {
+        const { data: inbound } = await supabase
+          .from("sms_conversations")
+          .select("phone")
+          .eq("tenant_id", tenantUser.tenant_id)
+          .eq("direction", "inbound")
+          .in("phone", altPhones);
+        for (const m of (inbound || []) as any[]) repliedSet.add(m.phone);
+      }
+
+      const rows: AltContactRow[] = (wos || [])
+        .filter((w: any) => !repliedSet.has(w.alt_contact_phone))
+        .map((w: any) => ({
+          wo_id: w.id,
+          wo_number: w.work_order_number,
+          customer_name: w.customer?.customer_name || "—",
+          alt_contact_name: w.alt_contact_name || "—",
+          alt_contact_phone: w.alt_contact_phone,
+          alt_contact_relationship: w.alt_contact_relationship,
+          appliance_type: w.appliance_type,
+          hours_since: hoursAgo(w.updated_at),
+        }));
+      setAltContacts(rows);
+      setErrors((e) => ({ ...e, ac: null }));
+    } catch (e) {
+      setErrors((er) => ({ ...er, ac: (e as Error).message }));
+    } finally {
+      setLoading((s) => ({ ...s, ac: false }));
+    }
+  }, [tenantUser]);
+
+  // ── Tile 10: New WO Velocity by source ──────────────────────────────────
+  const fetchVelocity = useCallback(async () => {
+    if (!tenantUser) return;
+    setLoading((s) => ({ ...s, v: true }));
+    try {
+      const today = todayCT();
+      const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+      const { data, error } = await supabase
+        .from("work_orders")
+        .select("source, warranty_company, created_at")
+        .eq("tenant_id", tenantUser.tenant_id)
+        .gte("created_at", weekAgo);
+      if (error) throw error;
+
+      const grouped: Record<string, { today: number; week: number }> = {};
+      for (const wo of (data || []) as any[]) {
+        const src = normalizeSource(wo.source, wo.warranty_company);
+        if (!grouped[src]) grouped[src] = { today: 0, week: 0 };
+        grouped[src].week++;
+        const createdDay = new Date(wo.created_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+        if (createdDay === today) grouped[src].today++;
+      }
+      const rows: SourceVelocityRow[] = Object.entries(grouped)
+        .map(([source, counts]) => ({ source, ...counts }))
+        .sort((a, b) => b.week - a.week);
+      setVelocity(rows);
+      setErrors((e) => ({ ...e, v: null }));
+    } catch (e) {
+      setErrors((er) => ({ ...er, v: (e as Error).message }));
+    } finally {
+      setLoading((s) => ({ ...s, v: false }));
+    }
+  }, [tenantUser]);
+
   const refreshAll = useCallback(() => {
     fetchUnscheduled(); fetchHotList(); fetchTodaySchedule();
     fetchOutreach(); fetchCapacity(); fetchParts();
+    fetchRevenue(); fetchAR(); fetchAltContacts(); fetchVelocity();
     setRefreshedAt(new Date());
-  }, [fetchUnscheduled, fetchHotList, fetchTodaySchedule, fetchOutreach, fetchCapacity, fetchParts]);
+  }, [fetchUnscheduled, fetchHotList, fetchTodaySchedule, fetchOutreach, fetchCapacity, fetchParts, fetchRevenue, fetchAR, fetchAltContacts, fetchVelocity]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -352,10 +549,13 @@ export default function BossBoardPage() {
         () => refreshAll())
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "sms_conversations", filter: `tenant_id=eq.${tid}` },
-        () => fetchOutreach())
+        () => { fetchOutreach(); fetchAltContacts(); })
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "invoices", filter: `tenant_id=eq.${tid}` },
+        () => { fetchRevenue(); fetchAR(); })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [tenantUser, refreshAll, fetchOutreach]);
+  }, [tenantUser, refreshAll, fetchOutreach, fetchAltContacts, fetchRevenue, fetchAR]);
 
   const totalTodayBooked = capacity.reduce((s, r) => s + r.today_booked, 0);
   const totalTodayMax = capacity.reduce((s, r) => s + r.today_max, 0);
@@ -529,10 +729,116 @@ export default function BossBoardPage() {
             </div>
           </div>
         </BossTile>
+
+        {/* Revenue */}
+        <BossTile
+          title="Revenue" icon={DollarSign} accent="emerald"
+          count={fmtMoney(revenue.month)}
+          loading={loading.r} error={errors.r}
+          footer="Month-to-date"
+        >
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <div>
+              <div className="text-xl font-bold text-emerald-700 tabular-nums">{fmtMoney(revenue.today)}</div>
+              <div className="text-[11px] text-slate-500 uppercase tracking-wide">Today</div>
+            </div>
+            <div>
+              <div className="text-xl font-bold text-emerald-700 tabular-nums">{fmtMoney(revenue.week)}</div>
+              <div className="text-[11px] text-slate-500 uppercase tracking-wide">Last 7 days</div>
+            </div>
+          </div>
+        </BossTile>
+
+        {/* A/R Aging */}
+        <BossTile
+          title="A/R Outstanding" icon={Receipt} accent="amber"
+          count={fmtMoney(ar.total_outstanding)}
+          loading={loading.a} error={errors.a}
+          empty={ar.total_outstanding === 0}
+          emptyText="Nothing outstanding."
+        >
+          <ul className="text-sm space-y-2 pt-1">
+            <li className="flex items-center justify-between">
+              <span className="text-slate-700">0–30 days</span>
+              <span className="tabular-nums">
+                <span className="font-semibold text-slate-800">{fmtMoney(ar.bucket_0_30)}</span>
+                <span className="text-xs text-slate-400 ml-1">({ar.count_0_30})</span>
+              </span>
+            </li>
+            <li className="flex items-center justify-between">
+              <span className="text-slate-700">31–60 days</span>
+              <span className="tabular-nums">
+                <span className="font-semibold text-amber-700">{fmtMoney(ar.bucket_31_60)}</span>
+                <span className="text-xs text-slate-400 ml-1">({ar.count_31_60})</span>
+              </span>
+            </li>
+            <li className="flex items-center justify-between">
+              <span className="text-slate-700">60+ days</span>
+              <span className="tabular-nums">
+                <span className="font-semibold text-rose-700">{fmtMoney(ar.bucket_60_plus)}</span>
+                <span className="text-xs text-slate-400 ml-1">({ar.count_60_plus})</span>
+              </span>
+            </li>
+          </ul>
+        </BossTile>
+
+        {/* Alt-Contact Handoffs Awaiting Reply */}
+        <BossTile
+          title="Alt-Contact Handoffs" icon={UserCheck} accent="violet"
+          count={altContacts.length}
+          loading={loading.ac} error={errors.ac}
+          empty={altContacts.length === 0}
+          emptyText="No alt-contact handoffs awaiting reply."
+          footer="Texts sent to spouse / tenant / etc with no response yet"
+        >
+          <ul className="text-sm divide-y divide-slate-100">
+            {altContacts.slice(0, 5).map((c) => (
+              <li key={c.wo_id} className="py-2 flex items-center justify-between gap-2">
+                <Link href={`/jobs/${c.wo_id}`} className="min-w-0 flex-1 hover:text-violet-700">
+                  <div className="font-medium text-slate-800 truncate">
+                    {c.alt_contact_name}
+                    {c.alt_contact_relationship && <span className="text-slate-400 font-normal"> · {c.alt_contact_relationship}</span>}
+                  </div>
+                  <div className="text-xs text-slate-500 truncate">
+                    For {c.customer_name}{c.appliance_type && ` · ${c.appliance_type}`}
+                  </div>
+                </Link>
+                <div className="text-right shrink-0">
+                  <div className="text-xs font-medium text-slate-700">{c.hours_since}h</div>
+                  <div className="text-[10px] text-slate-400">since</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {altContacts.length > 5 && <div className="text-xs text-slate-500 mt-2">+ {altContacts.length - 5} more</div>}
+        </BossTile>
+
+        {/* New WO Velocity by source */}
+        <BossTile
+          title="New WO Velocity" icon={TrendingUp} accent="blue"
+          count={velocity.reduce((s, r) => s + r.week, 0)}
+          countSuffix="/wk"
+          loading={loading.v} error={errors.v}
+          empty={velocity.length === 0}
+          emptyText="No new work orders this week."
+          footer="By source · last 7 days"
+        >
+          <ul className="text-sm space-y-1.5">
+            {velocity.map((r) => (
+              <li key={r.source} className="flex items-center justify-between">
+                <span className="text-slate-700 font-medium truncate">{r.source}</span>
+                <span className="text-xs text-slate-500 tabular-nums">
+                  <span className="text-slate-800 font-semibold">{r.week}</span> wk
+                  <span className="text-slate-400 ml-2">{r.today} today</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </BossTile>
       </div>
 
       <div className="mt-6 text-center text-xs text-slate-400">
-        Phase 3 will add: Revenue, A/R aging, AI Quality Watchlist, Alt-Contact Handoffs, New WO Velocity by source.
+        AI Quality Watchlist coming next · paid-tier Home swap deferred to follow-up.
       </div>
     </div>
   );
