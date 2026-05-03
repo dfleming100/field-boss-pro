@@ -251,7 +251,57 @@ export async function POST(request: NextRequest) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ phone: searchDigits, tenant_id: tenantId }),
     });
-    const customerData = await lookupRes.json();
+    let customerData = await lookupRes.json();
+
+    // 1b. Bare WO number fallback. Customers from AHS/FAHW often reply
+    // with just their warranty WO number when asked for an address — they
+    // don't realize what we're asking for. If phone lookup didn't match
+    // AND the body is just digits 6+ chars, try matching it as a WO number
+    // (or warranty_wo_number) for this tenant. If found, route the
+    // conversation to that customer and silently capture this phone as
+    // phone2 for next time.
+    const bodyDigitsOnly = body.trim().replace(/[^\d]/g, "");
+    const isBareWoCandidate = !customerData.found
+      && bodyDigitsOnly.length >= 6
+      && body.trim().replace(/[\s-]/g, "") === bodyDigitsOnly; // body is essentially just the number
+    if (isBareWoCandidate) {
+      const { data: woMatch } = await sb
+        .from("work_orders")
+        .select("id, customer_id, work_order_number")
+        .eq("tenant_id", tenantId)
+        .or(`work_order_number.eq.${bodyDigitsOnly},warranty_wo_number.eq.${bodyDigitsOnly}`)
+        .not("status", "in", '("Complete","canceled")')
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (woMatch?.customer_id) {
+        // Capture this inbound phone as phone2 if the customer doesn't
+        // already have one — so next time they text from this number, the
+        // normal phone match catches it without the WO number dance.
+        const { data: cust } = await sb
+          .from("customers")
+          .select("phone, phone2")
+          .eq("id", woMatch.customer_id)
+          .single();
+        const fromLast10 = searchDigits.slice(-10);
+        const onFile1 = (cust?.phone || "").replace(/\D/g, "").slice(-10);
+        const onFile2 = (cust?.phone2 || "").replace(/\D/g, "").slice(-10);
+        if (fromLast10.length === 10 && fromLast10 !== onFile1 && fromLast10 !== onFile2 && !cust?.phone2) {
+          await sb.from("customers").update({ phone2: from }).eq("id", woMatch.customer_id);
+        }
+        // Re-run the customer lookup using the matched WO's phone so the
+        // rest of the pipeline (slots, AI prompt) gets a normal customer
+        // payload rather than a hand-built one.
+        const lookupPhone = (cust?.phone || from).replace(/\D/g, "");
+        const reLookup = await fetch(`${APP_URL}/api/vapi/customer-lookup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: lookupPhone, tenant_id: tenantId }),
+        });
+        const reLookupData = await reLookup.json();
+        if (reLookupData?.found) customerData = reLookupData;
+      }
+    }
 
     // 2. Always fetch available slots so Claude has full context for any request
     let slotsData: any = null;
