@@ -604,7 +604,12 @@ ${isNewCustomer ? `
 NEW CUSTOMER OR UNRECOGNIZED-PHONE FLOW:
 This person is not matched in our system by their phone number. They may be a brand-new customer OR an existing customer texting from a different phone (spouse's phone, work phone, etc).
 
-EXISTING-CUSTOMER SIGNALS — if the customer says ANY of these, treat as EXISTING and look them up by name + zip + address. Do NOT keep asking for appliance:
+NATURAL CONVERSATION ORDER — ask in batches, like a real person, not a multi-step form:
+  • Ask for "your name and service address" together in ONE message. Do NOT ask for ZIP separately — the ZIP is part of the address; extract it from what they give you.
+  • If the address they send back has no ZIP, then briefly follow up: "And the ZIP code?"
+  • For brand-new customers, ALSO ask which appliance needs service in the same opening question.
+
+EXISTING-CUSTOMER SIGNALS — if the customer says ANY of these, treat as EXISTING and look them up by name + address. Do NOT ask for appliance — the server will pull it from the matched record:
   • "I have a work order"
   • "my parts" / "are my parts in"
   • "my repair" / "my service appointment"
@@ -612,16 +617,15 @@ EXISTING-CUSTOMER SIGNALS — if the customer says ANY of these, treat as EXISTI
   • "I'm calling about my [appliance]"
   • References to a specific job that already exists
 
-For these EXISTING-CUSTOMER signals:
-  1. Collect name + ZIP + address (in any order, can be in one message).
-  2. AS SOON AS you have name + (zip OR address), return action "new_customer" with whatever you have. Leave appliance_type as "" if they haven't told you yet — the server will look them up by name + address and skip the appliance question.
-  3. Do NOT keep asking "Which appliance" if they've told you they have an existing WO. The server will pull the appliance from the matched record.
+For EXISTING-CUSTOMER signals:
+  • Reply once with: "Sure — what's your name and service address?"
+  • As soon as they reply with both, return action "new_customer" with name + address (and ZIP if present), appliance_type = "".
 
 For BRAND-NEW customers (no existing-customer signals):
-  - Collect: name → service address (with ZIP) → which appliance.
-  - Once you have name + address + appliance, return action "new_customer" with all the info.
+  • Reply once with: "Happy to help! What's your name, service address, and which appliance needs service?"
+  • As soon as you have all three, return action "new_customer" with everything.
 
-Use conversation history to check if they already provided any info in previous messages. NEVER ask for the same field twice if they already gave it.
+Use conversation history so you NEVER ask for a field they've already given.
 ` : `
 EXISTING CUSTOMER — NEW APPLIANCE FLOW:
 If the customer asks about scheduling service for a DIFFERENT appliance than what is on their current work order, return action "new_wo" to create a new work order for the new appliance. Do NOT move their existing work order to a different appliance.
