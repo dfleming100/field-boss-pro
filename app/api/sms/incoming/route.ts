@@ -211,16 +211,11 @@ export async function POST(request: NextRequest) {
     let replyText = aiResult.reply;
 
     // Handle new customer creation OR existing-customer lookup-by-address.
-    // Trigger as soon as we have name plus (address OR zip). Appliance is no
-    // longer required because customers who say "I have a work order
-    // already" need us to LOOK THEM UP before they tell us the appliance.
-    // The server-side address+name match (in create-customer-wo) will:
-    //   - reuse an existing customer + active WO if one matches, OR
-    //   - create a fresh customer + WO (appliance optional, can backfill later)
+    // Trigger when we have ANY identifier: address (preferred — unambiguous)
+    // or name+zip. Phone has already been tried at the top of the handler.
     if (
       aiResult.action === "new_customer" &&
-      aiResult.customer_name &&
-      (aiResult.service_address || aiResult.zip)
+      (aiResult.service_address || (aiResult.customer_name && aiResult.zip))
     ) {
       try {
         const createRes = await fetch(`${APP_URL}/api/sms/create-customer-wo`, {
@@ -229,7 +224,7 @@ export async function POST(request: NextRequest) {
           body: JSON.stringify({
             tenant_id: tenantId,
             phone: from,
-            customer_name: aiResult.customer_name,
+            customer_name: aiResult.customer_name || "",
             service_address: aiResult.service_address || "",
             city: aiResult.city || "",
             state: aiResult.state || "",
@@ -238,8 +233,16 @@ export async function POST(request: NextRequest) {
           }),
         });
         const createData = await createRes.json();
-        if (createData.success) {
-          // Get slots for the matched/new WO
+
+        // Address matches multiple customers and we have no name → ask for one
+        if (createData.ambiguous && createData.reason === "multiple_customers_at_address") {
+          replyText = `I see more than one record at that address — could you give me your full name so I can pull up the right one?`;
+        }
+        // No phone match, no address match, no name → ask for name
+        else if (createData.needs_name) {
+          replyText = `I couldn't find an existing record at that address. To set you up, what is your name?`;
+        }
+        else if (createData.success) {
           const newSlotsRes = await fetch(`${APP_URL}/api/vapi/get-available-slots`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -248,9 +251,13 @@ export async function POST(request: NextRequest) {
           const newSlots = await newSlotsRes.json();
 
           if (createData.reused_existing_wo) {
-            // We matched them to an existing customer's active WO — override
-            // the AIs new-customer reply with a recognition message.
-            const firstName = (aiResult.customer_name || "there").split(" ")[0];
+            // Pull customer details for personalized recognition
+            const { data: matchedCustomer } = await sb
+              .from("customers")
+              .select("customer_name")
+              .eq("id", createData.customer_id)
+              .single();
+            const firstName = (matchedCustomer?.customer_name || "there").split(" ")[0];
             replyText =
               `Hi ${firstName} — I found your existing work order #${createData.work_order_number}. ` +
               (newSlots.agent_summary || "Let me know what you need.");
@@ -604,12 +611,11 @@ ${isNewCustomer ? `
 NEW CUSTOMER OR UNRECOGNIZED-PHONE FLOW:
 This person is not matched in our system by their phone number. They may be a brand-new customer OR an existing customer texting from a different phone (spouse's phone, work phone, etc).
 
-NATURAL CONVERSATION ORDER — ask in batches, like a real person, not a multi-step form:
-  • Ask for "your name and service address" together in ONE message. Do NOT ask for ZIP separately — the ZIP is part of the address; extract it from what they give you.
-  • If the address they send back has no ZIP, then briefly follow up: "And the ZIP code?"
-  • For brand-new customers, ALSO ask which appliance needs service in the same opening question.
+NATURAL CONVERSATION ORDER — address is the unambiguous identifier; lead with it.
+  • ZIP is part of the address — never ask for it separately. Extract it from the address response.
+  • Only ask for ZIP as a follow-up if the address they sent has no ZIP.
 
-EXISTING-CUSTOMER SIGNALS — if the customer says ANY of these, treat as EXISTING and look them up by name + address. Do NOT ask for appliance — the server will pull it from the matched record:
+EXISTING-CUSTOMER SIGNALS — if the customer says ANY of these, treat as EXISTING and look them up by ADDRESS ALONE. Don't ask for name or appliance up-front; the server will pull both from the matched record:
   • "I have a work order"
   • "my parts" / "are my parts in"
   • "my repair" / "my service appointment"
@@ -618,12 +624,13 @@ EXISTING-CUSTOMER SIGNALS — if the customer says ANY of these, treat as EXISTI
   • References to a specific job that already exists
 
 For EXISTING-CUSTOMER signals:
-  • Reply once with: "Sure — what's your name and service address?"
-  • As soon as they reply with both, return action "new_customer" with name + address (and ZIP if present), appliance_type = "".
+  • Reply once with: "Sure — what's your service address?"
+  • As soon as they reply with the address, return action "new_customer" with service_address (and zip if present). Leave customer_name = "" and appliance_type = "". The server will look them up by address; if matched, it pulls their real name and active WO.
+  • If the server can't match (multiple records at same address, or no match), the next inbound message handler will ask for name to disambiguate — don't worry about that yourself.
 
 For BRAND-NEW customers (no existing-customer signals):
-  • Reply once with: "Happy to help! What's your name, service address, and which appliance needs service?"
-  • As soon as you have all three, return action "new_customer" with everything.
+  • Reply once with: "Happy to help! What's your service address and which appliance needs service? (If you can include your name too, that speeds things up.)"
+  • As soon as you have address + appliance, return action "new_customer" with everything you've collected (name optional — server will ask if missing on a brand-new create).
 
 Use conversation history so you NEVER ask for a field they've already given.
 ` : `

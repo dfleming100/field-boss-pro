@@ -23,11 +23,12 @@ export async function POST(request: NextRequest) {
     const sb = supabaseAdmin();
     let customerId = existing_customer_id;
 
-    // Create customer if no existing ID
-    if (!customerId && customer_name) {
-      // 1) Try to match by phone (existing behavior)
+    // Match flow runs whenever we have at least one identifier (phone, name,
+    // or address). If we end with no customerId we'll either create or 400.
+    {
+      // 1) Try to match by phone (matches phone OR phone2)
       const phoneDigits = (phone || "").replace(/\D/g, "");
-      if (phoneDigits.length >= 7) {
+      if (!customerId && phoneDigits.length >= 7) {
         const { data: existing } = await sb
           .from("customers")
           .select("id")
@@ -40,14 +41,9 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // 2) Fallback to ADDRESS match if phone didn't hit. Customers
-      // commonly text from a number not on file (spouse, work phone),
-      // but the service address is stable. Mirrors Vapi behavior.
-      //
-      // SAFETY: address match must ALSO have a similar customer name.
-      // Same address + different name = different person (apartment,
-      // duplex, sold home, new tenant), so we create a new customer
-      // instead of merging records together.
+      // 2) Fallback to ADDRESS match if phone didn't hit. Address is the
+      // unambiguous identifier — customers often text from spouse/work
+      // phones not on file, but the service address is stable.
       if (!customerId && service_address) {
         const addrLower = service_address.toLowerCase().trim();
         const tokens: string[] = addrLower.match(/\d+|[a-z]{3,}/g) || [];
@@ -63,47 +59,63 @@ export async function POST(request: NextRequest) {
             .ilike("service_address", `%${streetNum}%${streetWord}%`)
             .limit(10);
 
-          // Name-similarity check: any shared 3+ char word between the
-          // inbound name and the existing customer_name = same person.
-          const nameWords = (customer_name || "")
-            .toLowerCase()
-            .split(/\s+/)
-            .filter((w: string) => w.length >= 3);
-          const addrMatch = (addrMatches || []).find((c: any) => {
-            const existingWords = (c.customer_name || "")
-              .toLowerCase()
-              .split(/\s+/)
-              .filter((w: string) => w.length >= 3);
-            return existingWords.some((w: string) => nameWords.includes(w));
-          });
+          let chosen: any = null;
+          if (addrMatches && addrMatches.length === 1) {
+            // Single match — accept it. Use this when caller didn't supply
+            // a name (existing-customer SMS flow asks for address only).
+            chosen = addrMatches[0];
+          } else if (addrMatches && addrMatches.length > 1) {
+            // Multiple records at same address (apt/duplex/etc). Need a
+            // name to disambiguate. If we have one, find the share-a-word
+            // match. Otherwise return ambiguous so the SMS handler asks
+            // for name.
+            if (customer_name) {
+              const nameWords = customer_name.toLowerCase().split(/\s+/).filter((w: string) => w.length >= 3);
+              chosen = addrMatches.find((c: any) => {
+                const existingWords = (c.customer_name || "").toLowerCase().split(/\s+/).filter((w: string) => w.length >= 3);
+                return existingWords.some((w: string) => nameWords.includes(w));
+              });
+            }
+            if (!chosen && !customer_name) {
+              // Ambiguous — let the caller ask for a name.
+              return NextResponse.json({
+                success: false,
+                ambiguous: true,
+                reason: "multiple_customers_at_address",
+                match_count: addrMatches.length,
+              });
+            }
+          }
 
-          if (addrMatch) {
-            customerId = addrMatch.id;
-            // Save the inbound phone as phone2 if it isn't already on file,
-            // so future texts from this number get recognized immediately.
+          if (chosen) {
+            customerId = chosen.id;
+            // Save the inbound phone as phone2 if it isn't already on file
             const inboundLast10 = phoneDigits.slice(-10);
-            const onFile1 = (addrMatch.phone || "").replace(/\D/g, "").slice(-10);
-            const onFile2 = (addrMatch.phone2 || "").replace(/\D/g, "").slice(-10);
+            const onFile1 = (chosen.phone || "").replace(/\D/g, "").slice(-10);
+            const onFile2 = (chosen.phone2 || "").replace(/\D/g, "").slice(-10);
             if (
               inboundLast10.length === 10 &&
               inboundLast10 !== onFile1 &&
               inboundLast10 !== onFile2 &&
-              !addrMatch.phone2
+              !chosen.phone2
             ) {
-              await sb
-                .from("customers")
-                .update({ phone2: phone })
-                .eq("id", customerId);
+              await sb.from("customers").update({ phone2: phone }).eq("id", customerId);
             }
           }
-          // Otherwise (address match but name mismatch): fall through to
-          // create a new customer. Same-address-different-name is a
-          // legitimate scenario, not a duplicate.
         }
       }
 
-      // 3) Still no match → create new customer
-      if (!customerId) {
+      // 3) Still no match — only create a NEW customer if we have a name.
+      // Without a name (e.g. address didn't match anything), the SMS
+      // handler should ask for one before we commit a record.
+      if (!customerId && !customer_name) {
+        return NextResponse.json({
+          success: false,
+          needs_name: true,
+          reason: "no_match_and_no_name",
+        });
+      }
+      if (!customerId && customer_name) {
         const { data: newCust, error: custErr } = await sb
           .from("customers")
           .insert({
