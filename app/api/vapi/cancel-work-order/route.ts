@@ -22,13 +22,38 @@ export async function POST(request: NextRequest) {
   try {
     const raw = await request.json();
 
-    let args = raw;
+    // Extract args + toolCallId from any of Vapi's payload shapes.
+    // Vapi has shipped multiple formats (toolCalls / toolCallList / flat /
+    // singular toolCall) — the cancel previously failed because we only
+    // checked one path, missed the toolCallId, and returned a bare body
+    // that Vapi rejected as "no result returned."
+    let args: any = raw;
     let toolCallId = "";
-    if (raw.message?.toolCalls?.[0]) {
-      const tc = raw.message.toolCalls[0];
-      args = tc.function?.arguments || {};
-      toolCallId = tc.id || "";
+    const tc =
+      raw.message?.toolCalls?.[0]
+      || raw.message?.toolCallList?.[0]
+      || raw.toolCalls?.[0]
+      || raw.toolCallList?.[0]
+      || raw.message?.toolCall
+      || raw.toolCall
+      || null;
+    if (tc) {
+      const a = tc.function?.arguments || tc.arguments || {};
+      args = typeof a === "string" ? JSON.parse(a) : a;
+      toolCallId = tc.id || tc.toolCallId || "";
+    } else if (raw.message?.toolCallId || raw.toolCallId) {
+      toolCallId = raw.message?.toolCallId || raw.toolCallId;
     }
+    // Detect whether this came from Vapi at all — if so, we MUST return the
+    // wrapped envelope, even with an empty toolCallId, or Vapi treats the
+    // call as a no-op.
+    const isVapi = Boolean(
+      tc
+      || raw.message
+      || raw.call
+      || raw.toolCallId
+      || raw.assistantId
+    );
 
     let workOrderNumber = (args.work_order_number || args.workOrderNumber || "").trim();
     if (!workOrderNumber) {
@@ -40,7 +65,7 @@ export async function POST(request: NextRequest) {
     const reason = (args.reason || "").toString().trim();
 
     if (!workOrderNumber) {
-      return wrapResponse(toolCallId, {
+      return wrapResponse(toolCallId, isVapi, {
         success: false,
         agent_summary: "I was not able to find that work order. Let me have a team member call you back.",
       });
@@ -68,7 +93,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!wo) {
-      return wrapResponse(toolCallId, {
+      return wrapResponse(toolCallId, isVapi, {
         success: false,
         agent_summary: "I could not find an active work order with that number. Let me transfer you to a team member.",
       });
@@ -96,7 +121,7 @@ export async function POST(request: NextRequest) {
 
     const cust = Array.isArray(wo.customer) ? wo.customer[0] : wo.customer;
     const firstName = (cust?.customer_name || "there").split(" ")[0];
-    return wrapResponse(toolCallId, {
+    return wrapResponse(toolCallId, isVapi, {
       success: true,
       work_order_number: wo.work_order_number,
       status: "Canceled",
@@ -108,8 +133,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function wrapResponse(toolCallId: string, result: any) {
-  if (toolCallId) {
+// Vapi expects: { results: [{ toolCallId, result: "<JSON-stringified payload>" }] }
+// — even when toolCallId is empty. Returning a bare body causes Vapi to
+// report "no result returned" and the agent confidently lies to the
+// customer that the action succeeded. Always wrap if Vapi is the caller.
+function wrapResponse(toolCallId: string, isVapi: boolean, result: any) {
+  if (isVapi) {
     return NextResponse.json({ results: [{ toolCallId, result: JSON.stringify(result) }] });
   }
   return NextResponse.json(result);

@@ -69,14 +69,35 @@ export async function POST(request: NextRequest) {
   try {
     const raw = await request.json();
 
-    // Handle Vapi tool call format
-    let args = raw;
+    // Handle every Vapi tool-call payload shape we've seen in the wild.
+    let args: any = raw;
     let toolCallId = "";
-    if (raw.message?.toolCalls?.[0]) {
-      const tc = raw.message.toolCalls[0];
-      args = tc.function?.arguments || {};
-      toolCallId = tc.id || "";
+    const tc =
+      raw.message?.toolCalls?.[0]
+      || raw.message?.toolCallList?.[0]
+      || raw.toolCalls?.[0]
+      || raw.toolCallList?.[0]
+      || raw.message?.toolCall
+      || raw.toolCall
+      || null;
+    if (tc) {
+      const a = tc.function?.arguments || tc.arguments || {};
+      args = typeof a === "string" ? JSON.parse(a) : a;
+      toolCallId = tc.id || tc.toolCallId || "";
+    } else if (raw.message?.toolCallId || raw.toolCallId) {
+      toolCallId = raw.message?.toolCallId || raw.toolCallId;
     }
+    // If anything Vapi-shaped was in the body, we MUST return the wrapped
+    // {results: [{toolCallId, result}]} envelope or Vapi rejects it as
+    // "no result returned" (silent failure with the agent confidently
+    // claiming success to the customer).
+    const isVapi = Boolean(
+      tc
+      || raw.message
+      || raw.call
+      || raw.toolCallId
+      || raw.assistantId
+    );
 
     const address = (args.address || "").trim();
     const phone = (args.phone || "").replace(/\D/g, "");
@@ -131,7 +152,7 @@ export async function POST(request: NextRequest) {
       }
     }
     if (!tenantId) {
-      return wrapResponse(toolCallId, {
+      return wrapResponse(toolCallId, isVapi, {
         found: false,
         message: "Internal configuration error: tenant could not be identified. Please contact support.",
       });
@@ -254,7 +275,7 @@ export async function POST(request: NextRequest) {
         found: false,
         message: "I could not find an account for that address. Ask the customer: Do you have a work order number or a phone number on file? Try looking them up again with the phone number. Only create a new account after trying phone number and the customer confirms they are new.",
       };
-      return wrapResponse(toolCallId, result);
+      return wrapResponse(toolCallId, isVapi, result);
     }
 
     // Fetch work orders for this customer, ordered by status priority
@@ -349,15 +370,19 @@ export async function POST(request: NextRequest) {
       appointment: enrichedAppt,
     };
 
-    return wrapResponse(toolCallId, result);
+    return wrapResponse(toolCallId, isVapi, result);
   } catch (error) {
     console.error("Customer lookup error:", error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }
 
-function wrapResponse(toolCallId: string, result: any) {
-  if (toolCallId) {
+// Vapi expects: { results: [{ toolCallId, result: "<JSON-stringified payload>" }] }
+// — even when toolCallId is empty. Returning a bare body causes Vapi to
+// report "no result returned" and the agent confidently lies to the
+// customer that the action succeeded. Always wrap if Vapi is the caller.
+function wrapResponse(toolCallId: string, isVapi: boolean, result: any) {
+  if (isVapi) {
     return NextResponse.json({
       results: [{ toolCallId, result: JSON.stringify(result) }],
     });
