@@ -236,7 +236,7 @@ export async function POST(request: NextRequest) {
       `)
       .eq("customer_id", customer.id)
       .eq("tenant_id", customer.tenant_id)
-      .not("status", "in", '("Complete")')
+      .not("status", "in", '("Complete","Canceled","canceled")')
       .order("created_at", { ascending: false });
 
     // Find active WO by status priority

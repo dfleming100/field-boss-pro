@@ -505,7 +505,7 @@ export default function BossBoardPage() {
           customer:customers(customer_name)`)
         .eq("tenant_id", tenantUser.tenant_id)
         .not("alt_contact_phone", "is", null)
-        .not("status", "in", '("Complete","canceled")')
+        .not("status", "in", '("Complete","Canceled","canceled")')
         .order("updated_at", { ascending: false })
         .limit(20);
       if (error) throw error;

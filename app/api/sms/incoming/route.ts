@@ -270,7 +270,7 @@ export async function POST(request: NextRequest) {
         .select("id, customer_id, work_order_number")
         .eq("tenant_id", tenantId)
         .or(`work_order_number.eq.${bodyDigitsOnly},warranty_wo_number.eq.${bodyDigitsOnly}`)
-        .not("status", "in", '("Complete","canceled")')
+        .not("status", "in", '("Complete","Canceled","canceled")')
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -473,6 +473,41 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Cancellation — customer says some flavor of "having to cancel",
+    // "no longer need this", "please cancel my appointment", etc. AI
+    // already returns action="cancel" but the handler used to just send
+    // the canned reply without actually moving the WO out of the active
+    // pipeline. Now: set status='Canceled' AND mark any scheduled
+    // appointments as 'canceled' so the WO stops appearing on the board,
+    // outreach stops, capacity frees up, etc.
+    if (aiResult.action === "cancel" && customerData.active_wo) {
+      try {
+        const woId = customerData.active_wo.wo_id;
+        const stamp = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
+        const reasonLine = `[${stamp}] Canceled by customer via SMS reply: "${body.trim().slice(0, 200)}"`;
+        const { data: woRow } = await sb
+          .from("work_orders")
+          .select("notes")
+          .eq("id", woId)
+          .single();
+        const newNotes = woRow?.notes ? `${woRow.notes}\n\n${reasonLine}` : reasonLine;
+        await sb.from("work_orders").update({
+          status: "Canceled",
+          status_changed_at: new Date().toISOString(),
+          notes: newNotes,
+        }).eq("id", woId);
+        // Cancel any future-or-today scheduled appointments for this WO
+        const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+        await sb.from("appointments")
+          .update({ status: "canceled" })
+          .eq("work_order_id", woId)
+          .eq("status", "scheduled")
+          .gte("appointment_date", todayStr);
+      } catch (e) {
+        console.error("[SMS] cancel handler failed:", e);
+      }
+    }
+
     // 5. Send reply SMS via Twilio
     // Use the already-found integration, or look it up
     if (!twilioIntegration) {
@@ -573,7 +608,7 @@ async function notifyAssignedTech(sb: any, tenantId: number, searchDigits: strin
     .select("id, work_order_number, assigned_technician_id, appliance_type")
     .eq("tenant_id", tenantId)
     .eq("customer_id", customer.id)
-    .not("status", "in", '("Complete","canceled")')
+    .not("status", "in", '("Complete","Canceled","canceled")')
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -842,7 +877,12 @@ ESCALATE — "I want to talk to someone", "I want a manager"
 Reply: "We understand your concern, [name]. We will forward your message to our team and someone will reach out to you. You can also reach us directly at ${companyPhone}."
 Action: "escalate"
 
-CANCEL — "Cancel my appointment", "I do not need service"
+CANCEL — Customer wants out of the service entirely. Match generously:
+  • "Cancel my appointment" / "I do not need service" / "having to cancel"
+  • "no longer need this" / "please cancel" / "remove me from the schedule"
+  • "going with someone else" / "warranty company is sending another tech"
+  • Any clear past or future tense indicating they don't want the work done
+This is DIFFERENT from "reschedule" (they want a different date) and DIFFERENT from STOP (opt out of SMS but service might continue). When in doubt between cancel and reschedule, treat as cancel only when the customer says they no longer need the service at all.
 Reply: "No problem, [name]. We have noted your cancellation request for your [appliance] service. If you change your mind or need anything in the future, just text us or call ${companyPhone}."
 Action: "cancel"
 

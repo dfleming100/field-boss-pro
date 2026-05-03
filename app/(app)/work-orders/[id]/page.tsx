@@ -57,9 +57,10 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; d
   "Parts Have Arrived": { label: "Parts Arrived", bg: "bg-teal-100", text: "text-teal-700", dot: "bg-teal-500" },
   "Scheduled": { label: "Scheduled", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500" },
   "Complete": { label: "Complete", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
+  "Canceled": { label: "Canceled", bg: "bg-gray-200", text: "text-gray-600", dot: "bg-gray-500" },
 };
 
-const statusOptions = ["New Hold", "New", "Parts Needed", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete"];
+const statusOptions = ["New Hold", "New", "Parts Needed", "Parts Ordered", "Parts Have Arrived", "Scheduled", "Complete", "Canceled"];
 
 const APPLIANCE_TYPES = [
   "Refrigerator", "Freezer", "Ice Maker",
