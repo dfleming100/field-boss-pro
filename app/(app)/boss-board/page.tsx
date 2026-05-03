@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { ClipboardList, Flame, CalendarDays, MessageCircle, Gauge, Package, RefreshCw, DollarSign, Receipt, UserCheck, TrendingUp } from "lucide-react";
+import { ClipboardList, Flame, CalendarDays, MessageCircle, Gauge, Package, RefreshCw, DollarSign, Receipt, UserCheck, TrendingUp, AlertTriangle } from "lucide-react";
 import BossTile from "@/app/components/BossTile";
 
 type WORow = {
@@ -70,6 +70,19 @@ type AltContactRow = {
 
 type SourceVelocityRow = { source: string; today: number; week: number };
 
+type WatchlistRow = {
+  phone: string;
+  customer_name: string;
+  reasons: string[];      // ["fallback", "paused", "long", "stop"]
+  turn_count: number;
+  last_at: string;
+};
+
+const WATCHLIST_LOOKBACK_HOURS = 48;
+const WATCHLIST_LONG_THRESHOLD = 6;
+const STOP_KEYWORDS = ["stop", "no thanks", "no thank you", "remove me", "unsubscribe", "cancel", "leave me alone"];
+const FALLBACK_MARKER = "Please call us at"; // matches both "can't pull availability" and "find a time" fallbacks
+
 const HOT_DAYS_THRESHOLD = 3;
 
 function fmtMoney(cents: number): string {
@@ -132,8 +145,9 @@ export default function BossBoardPage() {
   const [ar, setAr] = useState<ARRow>({ bucket_0_30: 0, count_0_30: 0, bucket_31_60: 0, count_31_60: 0, bucket_60_plus: 0, count_60_plus: 0, total_outstanding: 0 });
   const [altContacts, setAltContacts] = useState<AltContactRow[]>([]);
   const [velocity, setVelocity] = useState<SourceVelocityRow[]>([]);
+  const [watchlist, setWatchlist] = useState<WatchlistRow[]>([]);
 
-  const [loading, setLoading] = useState({ u: true, h: true, t: true, o: true, c: true, p: true, r: true, a: true, ac: true, v: true });
+  const [loading, setLoading] = useState({ u: true, h: true, t: true, o: true, c: true, p: true, r: true, a: true, ac: true, v: true, w: true });
   const [errors, setErrors] = useState<{ [k: string]: string | null }>({});
   const [refreshedAt, setRefreshedAt] = useState<Date>(new Date());
 
@@ -527,12 +541,125 @@ export default function BossBoardPage() {
     }
   }, [tenantUser]);
 
+  // ── Tile 11: AI Quality Watchlist ───────────────────────────────────────
+  // Surfaces SMS threads that hit ANY of 4 trouble signals in the last 48h:
+  //   - fallback: AI emitted a "please call us" reply (slot fetch failed
+  //     or the booking guard couldn't recover gracefully)
+  //   - paused: admin (or auto-pause) hit the kill switch on the thread
+  //   - long: 6+ messages exchanged with no scheduled appointment yet
+  //   - stop: customer said "stop", "cancel", "no thanks", "unsubscribe", etc
+  // Catches the Bahram / Laurie / Tom-shape failures without needing a
+  // separate analytics pipeline.
+  const fetchWatchlist = useCallback(async () => {
+    if (!tenantUser) return;
+    setLoading((s) => ({ ...s, w: true }));
+    try {
+      const since = new Date(Date.now() - WATCHLIST_LOOKBACK_HOURS * 3600000).toISOString();
+      const [convRes, pausedRes] = await Promise.all([
+        supabase
+          .from("sms_conversations")
+          .select("phone, direction, body, created_at, customer_id")
+          .eq("tenant_id", tenantUser.tenant_id)
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(500),
+        supabase
+          .from("sms_thread_state")
+          .select("phone, ai_paused")
+          .eq("tenant_id", tenantUser.tenant_id)
+          .eq("ai_paused", true),
+      ]);
+      if (convRes.error) throw convRes.error;
+      const messages = (convRes.data || []) as any[];
+      const pausedSet = new Set<string>(((pausedRes.data || []) as any[]).map((r) => r.phone));
+
+      // Group messages by phone
+      const byPhone: Record<string, { msgs: any[]; customer_id: number | null; last_at: string }> = {};
+      for (const m of messages) {
+        if (!m.phone) continue;
+        if (!byPhone[m.phone]) {
+          byPhone[m.phone] = { msgs: [], customer_id: m.customer_id, last_at: m.created_at };
+        }
+        byPhone[m.phone].msgs.push(m);
+        if (m.customer_id && !byPhone[m.phone].customer_id) byPhone[m.phone].customer_id = m.customer_id;
+      }
+
+      // Pull customer names for matched threads
+      const customerIds = Array.from(new Set(Object.values(byPhone).map((g) => g.customer_id).filter(Boolean))) as number[];
+      const customerNames: Record<number, string> = {};
+      if (customerIds.length > 0) {
+        const { data: custs } = await supabase
+          .from("customers")
+          .select("id, customer_name")
+          .in("id", customerIds);
+        for (const c of (custs || []) as any[]) customerNames[c.id] = c.customer_name;
+      }
+
+      // For "long with no booking" check, find which customers DO have a future scheduled appointment
+      const todayStr = todayCT();
+      const customersWithBooking = new Set<number>();
+      if (customerIds.length > 0) {
+        const { data: bookedAppts } = await supabase
+          .from("appointments")
+          .select("work_order:work_orders!inner(customer_id)")
+          .eq("tenant_id", tenantUser.tenant_id)
+          .eq("status", "scheduled")
+          .gte("appointment_date", todayStr);
+        for (const a of (bookedAppts || []) as any[]) {
+          const wo = Array.isArray(a.work_order) ? a.work_order[0] : a.work_order;
+          if (wo?.customer_id) customersWithBooking.add(wo.customer_id);
+        }
+      }
+
+      const rows: WatchlistRow[] = [];
+      for (const [phone, group] of Object.entries(byPhone)) {
+        const reasons: string[] = [];
+        const turnCount = group.msgs.length;
+        const hasFallback = group.msgs.some((m) => m.direction === "outbound" && (m.body || "").includes(FALLBACK_MARKER));
+        const isPaused = pausedSet.has(phone);
+        const lastInbound = group.msgs.find((m) => m.direction === "inbound");
+        const lastInboundLower = (lastInbound?.body || "").toLowerCase();
+        const hitStop = STOP_KEYWORDS.some((kw) => lastInboundLower.includes(kw));
+        const isLong = turnCount >= WATCHLIST_LONG_THRESHOLD &&
+          (!group.customer_id || !customersWithBooking.has(group.customer_id));
+
+        if (hasFallback) reasons.push("fallback");
+        if (isPaused) reasons.push("paused");
+        if (isLong) reasons.push("long");
+        if (hitStop) reasons.push("stop");
+
+        if (reasons.length === 0) continue;
+
+        rows.push({
+          phone,
+          customer_name: group.customer_id ? (customerNames[group.customer_id] || phone) : phone,
+          reasons,
+          turn_count: turnCount,
+          last_at: group.last_at,
+        });
+      }
+
+      // Worst-first: more reasons = worse, then more recent
+      rows.sort((a, b) => {
+        if (b.reasons.length !== a.reasons.length) return b.reasons.length - a.reasons.length;
+        return b.last_at.localeCompare(a.last_at);
+      });
+      setWatchlist(rows);
+      setErrors((e) => ({ ...e, w: null }));
+    } catch (e) {
+      setErrors((er) => ({ ...er, w: (e as Error).message }));
+    } finally {
+      setLoading((s) => ({ ...s, w: false }));
+    }
+  }, [tenantUser]);
+
   const refreshAll = useCallback(() => {
     fetchUnscheduled(); fetchHotList(); fetchTodaySchedule();
     fetchOutreach(); fetchCapacity(); fetchParts();
     fetchRevenue(); fetchAR(); fetchAltContacts(); fetchVelocity();
+    fetchWatchlist();
     setRefreshedAt(new Date());
-  }, [fetchUnscheduled, fetchHotList, fetchTodaySchedule, fetchOutreach, fetchCapacity, fetchParts, fetchRevenue, fetchAR, fetchAltContacts, fetchVelocity]);
+  }, [fetchUnscheduled, fetchHotList, fetchTodaySchedule, fetchOutreach, fetchCapacity, fetchParts, fetchRevenue, fetchAR, fetchAltContacts, fetchVelocity, fetchWatchlist]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -549,13 +676,16 @@ export default function BossBoardPage() {
         () => refreshAll())
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "sms_conversations", filter: `tenant_id=eq.${tid}` },
-        () => { fetchOutreach(); fetchAltContacts(); })
+        () => { fetchOutreach(); fetchAltContacts(); fetchWatchlist(); })
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "sms_thread_state", filter: `tenant_id=eq.${tid}` },
+        () => fetchWatchlist())
       .on("postgres_changes",
         { event: "*", schema: "public", table: "invoices", filter: `tenant_id=eq.${tid}` },
         () => { fetchRevenue(); fetchAR(); })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [tenantUser, refreshAll, fetchOutreach, fetchAltContacts, fetchRevenue, fetchAR]);
+  }, [tenantUser, refreshAll, fetchOutreach, fetchAltContacts, fetchRevenue, fetchAR, fetchWatchlist]);
 
   const totalTodayBooked = capacity.reduce((s, r) => s + r.today_booked, 0);
   const totalTodayMax = capacity.reduce((s, r) => s + r.today_max, 0);
@@ -813,6 +943,44 @@ export default function BossBoardPage() {
           {altContacts.length > 5 && <div className="text-xs text-slate-500 mt-2">+ {altContacts.length - 5} more</div>}
         </BossTile>
 
+        {/* AI Quality Watchlist */}
+        <BossTile
+          title="AI Quality Watchlist" icon={AlertTriangle} accent="rose"
+          count={watchlist.length}
+          loading={loading.w} error={errors.w}
+          empty={watchlist.length === 0}
+          emptyText="No troubled threads in the last 48h."
+          footer="Threads with fallback / paused / 6+ turns / stop keywords"
+        >
+          <ul className="text-sm divide-y divide-slate-100">
+            {watchlist.slice(0, 5).map((w) => (
+              <li key={w.phone} className="py-2">
+                <Link href={`/sms?phone=${encodeURIComponent(w.phone)}`} className="block hover:text-rose-700">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-medium text-slate-800 truncate">{w.customer_name}</div>
+                    <div className="text-[10px] text-slate-400 shrink-0">{hoursAgo(w.last_at)}h ago · {w.turn_count} msgs</div>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {w.reasons.map((r) => {
+                      const labels: Record<string, { text: string; cls: string }> = {
+                        fallback: { text: "fallback", cls: "bg-rose-100 text-rose-700" },
+                        paused:   { text: "paused",   cls: "bg-amber-100 text-amber-700" },
+                        long:     { text: "6+ turns", cls: "bg-blue-100 text-blue-700" },
+                        stop:     { text: "stop kw",  cls: "bg-slate-200 text-slate-700" },
+                      };
+                      const l = labels[r];
+                      return l ? (
+                        <span key={r} className={`text-[10px] px-1.5 py-0.5 rounded ${l.cls}`}>{l.text}</span>
+                      ) : null;
+                    })}
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {watchlist.length > 5 && <div className="text-xs text-slate-500 mt-2">+ {watchlist.length - 5} more</div>}
+        </BossTile>
+
         {/* New WO Velocity by source */}
         <BossTile
           title="New WO Velocity" icon={TrendingUp} accent="blue"
@@ -838,7 +1006,7 @@ export default function BossBoardPage() {
       </div>
 
       <div className="mt-6 text-center text-xs text-slate-400">
-        AI Quality Watchlist coming next · paid-tier Home swap deferred to follow-up.
+        All 11 v1 tiles live. Updates in realtime via Supabase.
       </div>
     </div>
   );
