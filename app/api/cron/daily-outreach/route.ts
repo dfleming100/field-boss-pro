@@ -164,12 +164,27 @@ export async function GET(request: NextRequest) {
         .maybeSingle();
       if (pausedThread) continue;
 
-      // Idempotency guard against Vercel cron double-fires: if this WO was
-      // outreached in the last 30 minutes, skip. Normal cooldown is hours.
-      if (wo.last_outreach_date) {
-        const minsSince = (Date.now() - new Date(wo.last_outreach_date).getTime()) / 60000;
-        if (minsSince < 30) continue;
-      }
+      // Idempotency guard against Vercel cron double-fires.
+      // Old read-then-write check raced when two cron invocations fired
+      // ~10–30 seconds apart: both read a stale last_outreach_date hours
+      // old, both proceeded, both sent SMS. Bahram saw 2 messages per cron
+      // window because of this race.
+      //
+      // Atomic claim: update last_outreach_date to NOW, but only if it's
+      // null OR older than 30 minutes. If the update returns 0 rows, some
+      // other invocation already claimed this WO — skip.
+      const claimCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const nowIso = new Date().toISOString();
+      const { data: claimed } = await sb
+        .from("work_orders")
+        .update({
+          last_outreach_date: nowIso,
+          first_outreach_date: wo.first_outreach_date || nowIso,
+        })
+        .eq("id", wo.id)
+        .or(`last_outreach_date.is.null,last_outreach_date.lt.${claimCutoff}`)
+        .select("id");
+      if (!claimed || claimed.length === 0) continue;
 
       // Stop after 5 days from first outreach
       if (wo.first_outreach_date && new Date(wo.first_outreach_date) < new Date(fiveDaysAgo)) {
@@ -353,13 +368,10 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Update outreach count + last_outreach_date so the 30-min idempotency
-      // guard at the top of the loop knows when we last fired.
-      const nowIso = new Date().toISOString();
+      // last_outreach_date + first_outreach_date were already set by the
+      // atomic claim above. Just bump the counter now that we've actually sent.
       await sb.from("work_orders").update({
         outreach_count: (wo.outreach_count || 0) + 1,
-        last_outreach_date: nowIso,
-        first_outreach_date: wo.first_outreach_date || nowIso,
       }).eq("id", wo.id);
 
       results.push(result);
