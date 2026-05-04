@@ -94,7 +94,10 @@ export async function POST(request: NextRequest) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: `${tenantName} <noreply@fieldbosspro.com>`,
+            // Use Resend's verified onboarding sender until fieldbosspro.com
+            // domain DNS is verified — unverified-domain attempts return 403
+            // and the receipt button silently fails.
+            from: `${tenantName} <onboarding@resend.dev>`,
             to: emailTarget,
             subject: `Invoice ${invoice.invoice_number} — ${total}`,
             html: `
