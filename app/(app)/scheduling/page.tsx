@@ -207,7 +207,11 @@ function SchedulingContent() {
         customer:work_orders!inner(customer:customers(customer_name, service_address, city))
       `)
       .eq("tenant_id", tenantUser.tenant_id)
-      .eq("status", "scheduled")
+      // Include en_route — once the tech taps "On My Way" the appointment
+      // status flips from scheduled → en_route, but the appointment itself
+      // is still active and should stay on the schedule. Filter only the
+      // truly terminal states (canceled, completed).
+      .in("status", ["scheduled", "en_route"])
       .gte("appointment_date", dateRange.start)
       .lte("appointment_date", dateRange.end);
     if (isTech && techId) apptQuery = apptQuery.eq("technician_id", techId);

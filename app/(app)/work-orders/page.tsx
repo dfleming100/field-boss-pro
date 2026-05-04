@@ -62,6 +62,8 @@ const STATUS_CONFIG: Record<
   "Parts Have Arrived": { label: "Parts Arrived", bg: "bg-teal-100", text: "text-teal-700", dot: "bg-teal-500" },
   "Scheduled": { label: "Scheduled", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500" },
   "Complete": { label: "Complete", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
+  "Canceled": { label: "Canceled", bg: "bg-gray-100", text: "text-gray-700", dot: "bg-gray-400" },
+  "canceled": { label: "Canceled", bg: "bg-gray-100", text: "text-gray-700", dot: "bg-gray-400" },
 };
 
 function WorkOrdersContent() {
@@ -479,7 +481,15 @@ function WorkOrdersContent() {
             <tbody className="divide-y divide-gray-100">
               {filteredOrders.map((wo) => {
                 const appt = getNextAppointment(wo);
-                const statusCfg = STATUS_CONFIG[wo.status] || STATUS_CONFIG["New"];
+                // Unknown statuses render as the raw status with a neutral
+                // gray pill — better than silently lying about a Canceled
+                // WO being "New" because the config lookup missed.
+                const statusCfg = STATUS_CONFIG[wo.status] || {
+                  label: wo.status || "Unknown",
+                  bg: "bg-gray-100",
+                  text: "text-gray-700",
+                  dot: "bg-gray-400",
+                };
 
                 return (
                   <tr
