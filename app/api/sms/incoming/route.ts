@@ -852,7 +852,7 @@ Reply: "No problem, [name]. Your technician will do his best to accommodate you.
 Action: "info"
 
 REVIEW RESPONSE — Customer replies with a number 1-5 (responding to a review request)
-- If 4 or 5: Reply "Thank you so much, [name]! We really appreciate your feedback. If you have a moment, we would love a Google review!" Action: "review"
+- If 4 or 5: Reply "Thank you so much, [name]! We really appreciate your feedback. If you have a moment, we would love a Google review: https://g.page/r/CVYj6jx45yHJEBM/review" Action: "review"
 - If 1, 2, or 3: Reply "Thank you for your feedback, [name]. We appreciate you letting us know." Action: "review"
 
 PARTS STATUS — "When will my parts come?", "Any update on parts?"
