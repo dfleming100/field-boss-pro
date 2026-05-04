@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { supabaseAdmin } from "@/lib/supabase";
+import { calculateBilling } from "@/lib/billing";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2023-10-16",
@@ -21,8 +22,8 @@ export async function POST(request: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3002";
 
-    // TEMP: $1 test price for live-mode end-to-end verification — revert to 9900 base + 5000/extra-tech before launch
-    const totalAmount = 100;
+    const billing = calculateBilling(Number(techCount) || 0);
+    const totalAmount = billing.totalMonthlyCost * 100;
 
     // Create a Checkout session
     const session = await stripe.checkout.sessions.create({
