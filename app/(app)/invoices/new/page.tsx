@@ -302,14 +302,14 @@ function NewInvoiceContent() {
           )}
         </div>
 
-        {/* Notes */}
+        {/* Work Performed / Notes */}
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Work Performed / Notes</label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            placeholder="Additional notes for the customer..."
+            rows={4}
+            placeholder="Describe the work that was performed..."
             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
           />
         </div>
