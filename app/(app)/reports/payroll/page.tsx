@@ -68,7 +68,7 @@ export default function PayrollReportPage() {
       setVisits(data.map((v: any) => ({
         ...v,
         customer_name: v.customer?.customer_name || "—",
-        tech_name: v.technician?.tech_name || "—",
+        tech_name: v.tech?.tech_name || "—",
       })));
     }
     setIsLoading(false);
