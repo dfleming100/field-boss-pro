@@ -5,7 +5,8 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { ArrowLeft, Send, CheckCircle2, Printer, Pencil, Save, Plus, Trash2, X, MessageSquare, Mail, Link2, DollarSign } from "lucide-react";
+import { ArrowLeft, Send, CheckCircle2, Printer, Pencil, Save, Plus, Trash2, X, MessageSquare, Mail, Link2, DollarSign, CreditCard } from "lucide-react";
+import ChargeCardModal from "@/app/components/ChargeCardModal";
 
 interface LineItem {
   id: number | string;
@@ -31,6 +32,7 @@ export default function InvoiceDetailPage() {
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [chargeModalOpen, setChargeModalOpen] = useState(false);
 
   // Edit form state
   const [diagnosisFee, setDiagnosisFee] = useState(0);
@@ -294,29 +296,37 @@ export default function InvoiceDetailPage() {
                 disabled={isSending}
                 className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
               >
-                <MessageSquare size={14} /> Text
+                <MessageSquare size={14} /> {invoice.status === "paid" ? "Text Receipt" : "Text"}
               </button>
               <button
                 onClick={() => sendInvoice("email")}
                 disabled={isSending}
                 className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50"
               >
-                <Mail size={14} /> Email
+                <Mail size={14} /> {invoice.status === "paid" ? "Email Receipt" : "Email"}
               </button>
               <button onClick={copyLink} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100">
                 <Link2 size={14} /> Copy Link
               </button>
               {invoice.status !== "paid" && (
-                <button
-                  onClick={() => {
-                    const outstanding = Math.max(0, Number(invoice.total || 0) - Number(invoice.amount_paid || 0));
-                    setPaymentAmount(outstanding.toFixed(2));
-                    setPaymentModalOpen(true);
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100"
-                >
-                  <DollarSign size={14} /> Record Payment
-                </button>
+                <>
+                  <button
+                    onClick={() => setChargeModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+                  >
+                    <CreditCard size={14} /> Charge Card
+                  </button>
+                  <button
+                    onClick={() => {
+                      const outstanding = Math.max(0, Number(invoice.total || 0) - Number(invoice.amount_paid || 0));
+                      setPaymentAmount(outstanding.toFixed(2));
+                      setPaymentModalOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100"
+                  >
+                    <DollarSign size={14} /> Record Payment
+                  </button>
+                </>
               )}
               <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100">
                 <Printer size={14} /> Print
@@ -339,7 +349,17 @@ export default function InvoiceDetailPage() {
       {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
       {successMsg && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{successMsg}</div>}
 
-      <div className="bg-white rounded-xl border border-gray-200 p-8">
+      <div className="relative bg-white rounded-xl border border-gray-200 p-8">
+        {invoice.status === "paid" && (
+          <div className="pointer-events-none absolute top-8 right-8 -rotate-12 border-4 border-green-600 rounded-xl px-6 py-2 bg-green-50/90 z-10">
+            <div className="text-green-600 text-4xl font-black tracking-widest text-center">PAID</div>
+            {invoice.paid_at && (
+              <div className="text-green-600 text-[10px] font-bold text-center">
+                {new Date(invoice.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </div>
+            )}
+          </div>
+        )}
         {/* From / To */}
         <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-gray-200">
           <div>
@@ -489,16 +509,16 @@ export default function InvoiceDetailPage() {
           </>
         )}
 
-        {/* Notes */}
+        {/* Work Performed / Notes */}
         {isEditing ? (
           <div className="mt-6 pt-6 border-t border-gray-200">
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Notes</label>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="Additional notes..." />
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Work Performed / Notes</label>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="Describe the work that was performed..." />
           </div>
         ) : invoice.notes ? (
           <div className="mt-6 pt-6 border-t border-gray-200">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase mb-1">Notes</h3>
-            <p className="text-sm text-gray-600">{invoice.notes}</p>
+            <h3 className="text-xs font-semibold text-gray-500 uppercase mb-1">Work Performed</h3>
+            <p className="text-sm text-gray-600 whitespace-pre-wrap">{invoice.notes}</p>
           </div>
         ) : null}
       </div>
@@ -567,6 +587,19 @@ export default function InvoiceDetailPage() {
             </div>
           </div>
         </div>
+      )}
+      {chargeModalOpen && invoice && (
+        <ChargeCardModal
+          invoiceId={invoice.id}
+          amountCents={Math.round(Number(invoice.total) * 100)}
+          invoiceNumber={invoice.invoice_number}
+          onClose={() => setChargeModalOpen(false)}
+          onSuccess={() => {
+            setChargeModalOpen(false);
+            setSuccessMsg("Card charged successfully");
+            fetchInvoice();
+          }}
+        />
       )}
     </div>
   );
