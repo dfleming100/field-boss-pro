@@ -34,9 +34,13 @@ export default function TechSettingsPage() {
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [showAddTech, setShowAddTech] = useState(false);
-  const [newTechName, setNewTechName] = useState("");
+  const [newFirstName, setNewFirstName] = useState("");
+  const [newLastName, setNewLastName] = useState("");
   const [newTechPhone, setNewTechPhone] = useState("");
   const [newTechEmail, setNewTechEmail] = useState("");
+  const [newTechPassword, setNewTechPassword] = useState("");
+  const [addTechError, setAddTechError] = useState("");
+  const [addTechSaving, setAddTechSaving] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!tenantUser) return;
@@ -57,11 +61,14 @@ export default function TechSettingsPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Cycle: off → primary (1) → secondary (2) → off
   const toggleSkill = (techId: number, appliance: string) => {
     const newSkills = { ...skills };
     if (!newSkills[techId]) newSkills[techId] = {};
-    if (newSkills[techId][appliance]) delete newSkills[techId][appliance];
-    else newSkills[techId][appliance] = 1;
+    const current = newSkills[techId][appliance];
+    if (!current) newSkills[techId][appliance] = 1;
+    else if (current === 1) newSkills[techId][appliance] = 2;
+    else delete newSkills[techId][appliance];
     setSkills(newSkills);
   };
 
@@ -93,21 +100,72 @@ export default function TechSettingsPage() {
   };
 
   const addTech = async () => {
-    if (!newTechName.trim() || !tenantUser) return;
-    await supabase.from("technicians").insert({
-      tenant_id: tenantUser.tenant_id, tech_name: newTechName.trim(),
-      phone: newTechPhone || null, email: newTechEmail || null,
-      is_active: true, max_daily_appointments: 12, max_daily_repairs: 6,
-    });
-    setShowAddTech(false);
-    setNewTechName(""); setNewTechPhone(""); setNewTechEmail("");
-    await fetchData();
+    setAddTechError("");
+    if (!tenantUser) return;
+    if (!newFirstName.trim() || !newLastName.trim() || !newTechEmail.trim() || !newTechPassword) {
+      setAddTechError("First name, last name, email, and password are required");
+      return;
+    }
+    if (newTechPassword.length < 8) {
+      setAddTechError("Password must be at least 8 characters");
+      return;
+    }
+    setAddTechSaving(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setAddTechError("Session expired — sign in again");
+        return;
+      }
+      const res = await fetch("/api/admin/techs/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          tenant_id: tenantUser.tenant_id,
+          first_name: newFirstName.trim(),
+          last_name: newLastName.trim(),
+          email: newTechEmail.trim(),
+          password: newTechPassword,
+          phone: newTechPhone || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setAddTechError(data.error || "Failed to create technician");
+        return;
+      }
+      setShowAddTech(false);
+      setNewFirstName(""); setNewLastName(""); setNewTechPhone(""); setNewTechEmail(""); setNewTechPassword("");
+      await fetchData();
+    } finally {
+      setAddTechSaving(false);
+    }
   };
 
   const deleteTech = async (techId: number, name: string) => {
-    if (!window.confirm(`Delete ${name}?`)) return;
-    await supabase.from("tech_skills").delete().eq("technician_id", techId);
-    await supabase.from("technicians").update({ is_active: false }).eq("id", techId);
+    if (!window.confirm(`Delete ${name}? Their login access will be removed and they will no longer appear on the team.`)) return;
+    if (!tenantUser) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setError("Session expired — sign in again");
+      return;
+    }
+    const res = await fetch("/api/admin/techs/delete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ tenant_id: tenantUser.tenant_id, technician_id: techId }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      setError(data.error || "Failed to delete technician");
+      return;
+    }
     await fetchData();
   };
 
@@ -163,7 +221,14 @@ export default function TechSettingsPage() {
       {/* Skills Matrix */}
       {techs.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 overflow-x-auto">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Skill Assignment</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">Skill Assignment</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Click a cell to cycle: <span className="font-medium">empty</span> →{" "}
+            <span className="inline-block w-5 h-5 rounded text-[10px] font-bold text-white bg-indigo-600 text-center leading-5">1</span>{" "}
+            (primary specialty) →{" "}
+            <span className="inline-block w-5 h-5 rounded text-[10px] font-bold text-indigo-700 bg-indigo-100 border border-indigo-200 text-center leading-5">2</span>{" "}
+            (also able to do) → empty. The scheduler picks the tech with the lowest priority sum across all appliances on a WO.
+          </p>
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-200">
@@ -177,11 +242,33 @@ export default function TechSettingsPage() {
               {APPLIANCE_TYPES.map((appliance) => (
                 <tr key={appliance} className="hover:bg-gray-50">
                   <td className="py-2.5 text-sm text-gray-900">{appliance}</td>
-                  {techs.map((tech) => (
-                    <td key={tech.id} className="text-center py-2.5 px-3">
-                      <input type="checkbox" checked={!!skills[tech.id]?.[appliance]} onChange={() => toggleSkill(tech.id, appliance)} className="w-4 h-4 rounded border-gray-300 text-indigo-600" />
-                    </td>
-                  ))}
+                  {techs.map((tech) => {
+                    const priority = skills[tech.id]?.[appliance];
+                    let cellClass = "w-7 h-7 rounded-md text-xs font-bold border transition-all ";
+                    let label = "";
+                    if (priority === 1) {
+                      cellClass += "bg-indigo-600 border-indigo-600 text-white";
+                      label = "1";
+                    } else if (priority === 2) {
+                      cellClass += "bg-indigo-100 border-indigo-200 text-indigo-700";
+                      label = "2";
+                    } else {
+                      cellClass += "bg-white border-gray-300 text-gray-400 hover:border-indigo-300";
+                      label = "";
+                    }
+                    return (
+                      <td key={tech.id} className="text-center py-2.5 px-3">
+                        <button
+                          type="button"
+                          onClick={() => toggleSkill(tech.id, appliance)}
+                          className={cellClass}
+                          title={priority === 1 ? "Primary specialty" : priority === 2 ? "Can also do" : "Click to assign"}
+                        >
+                          {label}
+                        </button>
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -195,27 +282,42 @@ export default function TechSettingsPage() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
             <div className="flex items-center justify-between p-5 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">Add Technician</h3>
-              <button onClick={() => setShowAddTech(false)} className="p-1 text-gray-400 hover:text-gray-600"><X size={20} /></button>
+              <button onClick={() => { setShowAddTech(false); setAddTechError(""); }} className="p-1 text-gray-400 hover:text-gray-600"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <input type="text" value={newTechName} onChange={(e) => setNewTechName(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="John Smith" autoFocus />
-              </div>
+              <p className="text-xs text-gray-500">
+                Creates a login for this technician. They sign in with the email and password you set here.
+              </p>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                  <input type="tel" value={newTechPhone} onChange={(e) => setNewTechPhone(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">First name *</label>
+                  <input type="text" value={newFirstName} onChange={(e) => setNewFirstName(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="John" autoFocus />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                  <input type="email" value={newTechEmail} onChange={(e) => setNewTechEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Last name *</label>
+                  <input type="text" value={newLastName} onChange={(e) => setNewLastName(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="Smith" />
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                <input type="email" value={newTechEmail} onChange={(e) => setNewTechEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="john@example.com" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                <input type="text" value={newTechPassword} onChange={(e) => setNewTechPassword(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono" placeholder="At least 8 characters" />
+                <p className="text-xs text-gray-400 mt-1">Share this password securely with the tech — they can change it later in Settings.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                <input type="tel" value={newTechPhone} onChange={(e) => setNewTechPhone(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+              </div>
+              {addTechError && (
+                <div className="bg-red-50 border border-red-200 rounded p-2.5 text-sm text-red-700">{addTechError}</div>
+              )}
             </div>
             <div className="flex justify-end gap-3 p-5 border-t border-gray-200">
-              <button onClick={() => setShowAddTech(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button onClick={addTech} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">Add Technician</button>
+              <button onClick={() => { setShowAddTech(false); setAddTechError(""); }} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button onClick={addTech} disabled={addTechSaving} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">{addTechSaving ? "Creating…" : "Add Technician"}</button>
             </div>
           </div>
         </div>
