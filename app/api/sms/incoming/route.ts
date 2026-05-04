@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
     const toDigits = to.replace(/\D/g, "");
     let tenantId: number | null = null;
     let twilioIntegration: any = null;
-    let tenantInfo: { name: string; phone: string } = { name: "", phone: "" };
+    let tenantInfo: { name: string; phone: string; googleReviewUrl: string } = { name: "", phone: "", googleReviewUrl: "" };
 
     const { data: allTwilio } = await sb
       .from("tenant_integrations")
@@ -125,12 +125,16 @@ export async function POST(request: NextRequest) {
     // Fetch tenant info for dynamic prompt
     const { data: tenant } = await sb
       .from("tenants")
-      .select("name, phone")
+      .select("name, phone, google_review_url")
       .eq("id", tenantId)
       .single();
 
     if (tenant) {
-      tenantInfo = { name: tenant.name || "", phone: tenant.phone || "" };
+      tenantInfo = {
+        name: tenant.name || "",
+        phone: tenant.phone || "",
+        googleReviewUrl: tenant.google_review_url || "",
+      };
     }
 
     // Normalize phone
@@ -686,10 +690,11 @@ async function classifyIntent(
   slots: any,
   conversationThread?: string,
   servicedAppliances?: string,
-  tenantInfo?: { name: string; phone: string }
+  tenantInfo?: { name: string; phone: string; googleReviewUrl?: string }
 ): Promise<{ action: string; reply: string; chosen_date?: string; tech_id?: string; customer_name?: string; service_address?: string; city?: string; state?: string; zip?: string; appliance_type?: string; contact_name?: string; contact_phone?: string; relationship?: string }> {
   const companyName = tenantInfo?.name || "our company";
   const companyPhone = tenantInfo?.phone || "the office";
+  const reviewLink = tenantInfo?.googleReviewUrl || "";
 
   if (!ANTHROPIC_API_KEY) {
     return { action: "unclear", reply: `Thanks for reaching out! Please call us at ${companyPhone}.` };
@@ -852,7 +857,7 @@ Reply: "No problem, [name]. Your technician will do his best to accommodate you.
 Action: "info"
 
 REVIEW RESPONSE — Customer replies with a number 1-5 (responding to a review request)
-- If 4 or 5: Reply "Thank you so much, [name]! We really appreciate your feedback. If you have a moment, we would love a Google review: https://g.page/r/CVYj6jx45yHJEBM/review" Action: "review"
+- If 4 or 5: Reply "Thank you so much, [name]! We really appreciate your feedback.${reviewLink ? ` If you have a moment, we would love a Google review: ${reviewLink}` : " If you have a moment, we would love a Google review!"}" Action: "review"
 - If 1, 2, or 3: Reply "Thank you for your feedback, [name]. We appreciate you letting us know." Action: "review"
 
 PARTS STATUS — "When will my parts come?", "Any update on parts?"
