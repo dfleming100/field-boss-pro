@@ -12,12 +12,19 @@ export default function MapPage() {
 
   const fetchPins = useCallback(async () => {
     if (!tenantUser) return;
-    const { data } = await supabase
+    let query = supabase
       .from("technicians")
       .select("id, tech_name, last_lat, last_lng, last_location_at")
       .eq("tenant_id", tenantUser.tenant_id)
       .eq("is_active", true)
       .not("last_location_at", "is", null);
+
+    // Tech: only their own pin
+    if (tenantUser.role === "technician" && tenantUser.technician_id) {
+      query = query.eq("id", tenantUser.technician_id);
+    }
+
+    const { data } = await query;
     setTechPins((data || []).filter((t: any) => t.last_lat != null && t.last_lng != null) as TechPin[]);
     setLoading(false);
   }, [tenantUser]);

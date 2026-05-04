@@ -38,6 +38,29 @@ export default function CustomersPage() {
 
   const fetchCustomers = async () => {
     try {
+      // Tech role: limit to customers tied to their WOs (past or present).
+      if (tenantUser?.role === "technician" && tenantUser.technician_id) {
+        const { data: wos } = await supabase
+          .from("work_orders")
+          .select("customer_id")
+          .eq("tenant_id", tenantUser.tenant_id)
+          .eq("assigned_technician_id", tenantUser.technician_id);
+        const ids = Array.from(new Set((wos || []).map((w: any) => w.customer_id))).filter(Boolean);
+        if (ids.length === 0) {
+          setCustomers([]);
+          return;
+        }
+        const { data, error: fetchError } = await supabase
+          .from("customers")
+          .select("*")
+          .eq("tenant_id", tenantUser.tenant_id)
+          .in("id", ids)
+          .order("customer_name", { ascending: true });
+        if (fetchError) throw fetchError;
+        setCustomers(data || []);
+        return;
+      }
+
       const { data, error: fetchError } = await supabase
         .from("customers")
         .select("*")

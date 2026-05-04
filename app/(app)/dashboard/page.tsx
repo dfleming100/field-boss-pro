@@ -75,28 +75,36 @@ export default function DashboardPage() {
     const today = new Date().toISOString().split("T")[0];
     const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
 
+    // Tech-scope shorthand: when role=technician, filter all WO/appt counts by their tech_id
+    const isTech = tenantUser?.role === "technician";
+    const techId = tenantUser?.technician_id || null;
+    const woFilter = (q: any) => isTech && techId ? q.eq("assigned_technician_id", techId) : q;
+    const apptFilter = (q: any) => isTech && techId ? q.eq("technician_id", techId) : q;
+
     const [
       totalWO, openWO, todayCount, completedWO,
       custCount, techCount, leadCount,
       recentRes, apptRes,
     ] = await Promise.all([
-      supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid),
-      supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid).in("status", ["New", "Parts Ordered", "Parts Have Arrived", "Scheduled"]),
-      supabase.from("appointments").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("appointment_date", today),
-      supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("status", "Complete").gte("updated_at", weekAgo),
+      woFilter(supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid)),
+      woFilter(supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid).in("status", ["New", "Parts Ordered", "Parts Have Arrived", "Scheduled"])),
+      apptFilter(supabase.from("appointments").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("appointment_date", today)),
+      woFilter(supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("status", "Complete").gte("updated_at", weekAgo)),
       supabase.from("customers").select("id", { count: "exact", head: true }).eq("tenant_id", tid),
       supabase.from("technicians").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("is_active", true),
       supabase.from("leads").select("id", { count: "exact", head: true }).eq("tenant_id", tid).eq("status", "new"),
-      supabase.from("work_orders").select("*, customer:customers(customer_name)").eq("tenant_id", tid).order("created_at", { ascending: false }).limit(5),
-      supabase.from("appointments").select(`*, technician:technicians!assigned_technician_id(tech_name), work_order:work_orders(work_order_number, customer_id, customer:customers(customer_name))`).eq("tenant_id", tid).eq("appointment_date", today).order("start_time"),
+      woFilter(supabase.from("work_orders").select("*, customer:customers(customer_name)").eq("tenant_id", tid).order("created_at", { ascending: false }).limit(5)),
+      apptFilter(supabase.from("appointments").select(`*, technician:technicians!assigned_technician_id(tech_name), work_order:work_orders(work_order_number, customer_id, customer:customers(customer_name))`).eq("tenant_id", tid).eq("appointment_date", today).order("start_time")),
     ]);
 
-    const pinsRes = await supabase
+    let pinsQuery = supabase
       .from("technicians")
       .select("id, tech_name, last_lat, last_lng, last_location_at")
       .eq("tenant_id", tid)
       .eq("is_active", true)
       .not("last_location_at", "is", null);
+    if (isTech && techId) pinsQuery = pinsQuery.eq("id", techId);
+    const pinsRes = await pinsQuery;
     setTechPins((pinsRes.data || []).filter((t: any) => t.last_lat != null && t.last_lng != null) as TechPin[]);
 
     setStats({
