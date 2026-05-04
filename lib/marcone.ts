@@ -246,3 +246,48 @@ export async function trackPackage(trackingNumber: string): Promise<TrackPackage
     body: JSON.stringify(body),
   });
 }
+
+// ── Address validation & shipping methods ────────────────────────────────
+export interface ValidateAddressResponse {
+  transactionId?: string;
+  isValid?: boolean;
+  validatedAddress?: MarconeAddress;
+  messages?: string[];
+  [k: string]: unknown;
+}
+
+export async function validateAddress(addr: MarconeAddress): Promise<ValidateAddressResponse> {
+  const customerNumber = getMarconeCustomerNumber();
+  const body = {
+    custNo: customerNumber ? Number(customerNumber) : undefined,
+    ...addr,
+  };
+  return marconeFetch<ValidateAddressResponse>("orders/validateaddress", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export interface ShippingMethod {
+  shippingMethodId?: number;
+  shippingMethodName?: string;
+  description?: string;
+  carrier?: string;
+  [k: string]: unknown;
+}
+
+export interface ShippingMethodsResponse {
+  transactionId?: string;
+  shippingMethods?: ShippingMethod[];
+  [k: string]: unknown;
+}
+
+export async function getShippingMethods(warehouseNumber?: string): Promise<ShippingMethodsResponse> {
+  const customerNumber = getMarconeCustomerNumber();
+  const qs = new URLSearchParams();
+  if (customerNumber) qs.set("custNo", customerNumber);
+  if (warehouseNumber) qs.set("warehouseNumber", warehouseNumber);
+  return marconeFetch<ShippingMethodsResponse>(`orders/getshippingmethods?${qs.toString()}`, {
+    method: "GET",
+  });
+}
