@@ -86,8 +86,6 @@ export async function POST(request: NextRequest) {
 
     // Send Email (using Resend or similar — for now, log it)
     if ((method === "email" || method === "both") && emailTarget) {
-      // Check if we have an email provider configured
-      // For now, we'll use a simple approach — this can be upgraded to Resend/SendGrid later
       try {
         const emailRes = await fetch("https://api.resend.com/emails", {
           method: "POST",
@@ -115,10 +113,16 @@ export async function POST(request: NextRequest) {
             `,
           }),
         });
-        const emailData = await emailRes.json();
+        // Capture HTTP status BEFORE parsing the body — Resend success
+        // is determined by the 2xx status, not by whether the body parses
+        // as JSON. A non-JSON body (rare but possible) was previously
+        // throwing in the catch and reporting email=false even though
+        // the message had already been queued.
         results.email = emailRes.ok;
         if (!emailRes.ok) {
-          results.email_error = emailData;
+          const text = await emailRes.text().catch(() => "");
+          try { results.email_error = JSON.parse(text); }
+          catch { results.email_error = text || `HTTP ${emailRes.status}`; }
         }
       } catch (emailErr) {
         results.email = false;
