@@ -8,6 +8,29 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
 
 type Sb = ReturnType<typeof supabaseAdmin>;
 
+const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || "darryl@flemingusa.com";
+
+async function alertSuperAdmin(subject: string, html: string) {
+  if (!process.env.RESEND_API_KEY) return;
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "Field Boss Alerts <alerts@fieldbosspro.com>",
+        to: SUPER_ADMIN_EMAIL,
+        subject,
+        html,
+      }),
+    });
+  } catch (e) {
+    console.error("[alert] failed to send super-admin email:", e);
+  }
+}
+
 async function markInvoicePaid(sb: Sb, match: { sessionId?: string; paymentIntentId?: string }, paidAmountCents: number, paidVia: string) {
   if (!match.sessionId && !match.paymentIntentId) return { updated: 0 };
 
@@ -70,13 +93,18 @@ export async function POST(request: NextRequest) {
         if (session.mode === "subscription" && session.subscription) {
           const tenantId = session.metadata?.tenantId || session.metadata?.tenant_id;
           if (tenantId) {
+            const sub = await stripe.subscriptions.retrieve(String(session.subscription));
             await sb
               .from("tenants")
               .update({
                 plan: "professional",
                 stripe_subscription_id: String(session.subscription),
                 stripe_customer_id: typeof session.customer === "string" ? session.customer : session.customer?.id ?? null,
-                subscription_status: "active",
+                subscription_status: sub.status,
+                subscription_period_end: sub.current_period_end
+                  ? new Date(sub.current_period_end * 1000).toISOString()
+                  : null,
+                payment_failed_at: null,
               })
               .eq("id", tenantId);
           }
@@ -114,7 +142,12 @@ export async function POST(request: NextRequest) {
         const subscription = event.data.object as Stripe.Subscription;
         await sb
           .from("tenants")
-          .update({ subscription_status: subscription.status })
+          .update({
+            subscription_status: subscription.status,
+            subscription_period_end: subscription.current_period_end
+              ? new Date(subscription.current_period_end * 1000).toISOString()
+              : null,
+          })
           .eq("stripe_subscription_id", subscription.id);
         if (subscription.status === "past_due" || subscription.status === "unpaid") {
           console.warn("[stripe webhook] subscription past due:", subscription.id);
@@ -126,17 +159,34 @@ export async function POST(request: NextRequest) {
         const subscription = event.data.object as Stripe.Subscription;
         const { data: tenants } = await sb
           .from("tenants")
-          .select("id")
+          .select("id, name, contact_email, contact_phone")
           .eq("stripe_subscription_id", subscription.id);
         if (tenants && tenants.length > 0) {
+          const tenant = tenants[0];
           await sb
             .from("tenants")
             .update({
               plan: "free",
               stripe_subscription_id: null,
               subscription_status: "canceled",
+              subscription_period_end: subscription.current_period_end
+                ? new Date(subscription.current_period_end * 1000).toISOString()
+                : null,
             })
-            .eq("id", tenants[0].id);
+            .eq("id", tenant.id);
+
+          await alertSuperAdmin(
+            `🔴 Tenant cancelled: ${tenant.name}`,
+            `<h2>Subscription cancelled</h2>
+            <p><strong>${tenant.name}</strong> just cancelled their Field Boss Pro subscription.</p>
+            <ul>
+              <li>Tenant ID: ${tenant.id}</li>
+              <li>Email: ${tenant.contact_email || "—"}</li>
+              <li>Phone: ${tenant.contact_phone || "—"}</li>
+              <li>Access continues until: ${subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toLocaleDateString() : "—"}</li>
+            </ul>
+            <p>Reach out before period end to win them back.</p>`
+          );
         }
         break;
       }
@@ -145,10 +195,36 @@ export async function POST(request: NextRequest) {
         const invoice = event.data.object as Stripe.Invoice;
         const subId = typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id;
         if (subId) {
+          // Only stamp payment_failed_at if not already set (preserves first-failure timestamp for grace window)
+          const { data: tenant } = await sb
+            .from("tenants")
+            .select("id, name, contact_email, contact_phone, payment_failed_at")
+            .eq("stripe_subscription_id", subId)
+            .single();
+          const isFirstFailure = !tenant?.payment_failed_at;
           await sb
             .from("tenants")
-            .update({ subscription_status: "past_due" })
+            .update({
+              subscription_status: "past_due",
+              payment_failed_at: tenant?.payment_failed_at || new Date().toISOString(),
+            })
             .eq("stripe_subscription_id", subId);
+
+          // Only alert on the first failure (avoid spam from Stripe's retry attempts)
+          if (isFirstFailure && tenant) {
+            await alertSuperAdmin(
+              `⚠️ Payment failed: ${tenant.name}`,
+              `<h2>Subscription payment failed</h2>
+              <p><strong>${tenant.name}</strong>'s subscription card was declined.</p>
+              <ul>
+                <li>Tenant ID: ${tenant.id}</li>
+                <li>Email: ${tenant.contact_email || "—"}</li>
+                <li>Phone: ${tenant.contact_phone || "—"}</li>
+                <li>Amount: $${((invoice.amount_due || 0) / 100).toFixed(2)}</li>
+              </ul>
+              <p>They have 5 days from now to update their card before access is revoked. Stripe will keep retrying automatically.</p>`
+            );
+          }
         }
         break;
       }
@@ -159,7 +235,10 @@ export async function POST(request: NextRequest) {
         if (subId) {
           await sb
             .from("tenants")
-            .update({ subscription_status: "active" })
+            .update({
+              subscription_status: "active",
+              payment_failed_at: null,
+            })
             .eq("stripe_subscription_id", subId);
         }
         break;
@@ -181,6 +260,42 @@ export async function POST(request: NextRequest) {
             stripe_details_submitted: account.details_submitted || false,
           })
           .eq("stripe_connect_account_id", account.id);
+
+        // Auto-provision a Terminal Location once the connected account is fully active.
+        // Required so techs can use Tap to Pay through this tenant's account.
+        if (account.charges_enabled && account.details_submitted) {
+          try {
+            const existing = await stripe.terminal.locations.list(
+              { limit: 1 },
+              { stripeAccount: account.id }
+            );
+            if (existing.data.length === 0) {
+              const addr = account.business_profile?.support_address || account.company?.address;
+              const { data: tenantRow } = await sb
+                .from("tenants")
+                .select("name")
+                .eq("stripe_connect_account_id", account.id)
+                .single();
+              const displayName = tenantRow?.name || account.business_profile?.name || "Field Service";
+              await stripe.terminal.locations.create(
+                {
+                  display_name: displayName,
+                  address: {
+                    line1: addr?.line1 || "Address pending",
+                    city: addr?.city || "Pending",
+                    state: addr?.state || "TX",
+                    postal_code: addr?.postal_code || "00000",
+                    country: addr?.country || "US",
+                  },
+                },
+                { stripeAccount: account.id }
+              );
+              console.log("[stripe webhook] auto-created Terminal Location for", account.id);
+            }
+          } catch (locErr) {
+            console.warn("[stripe webhook] failed to auto-create Terminal Location:", (locErr as Error).message);
+          }
+        }
         break;
       }
 

@@ -128,7 +128,7 @@ function BillingContent() {
       });
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        window.open(data.url, "_blank", "noopener,noreferrer");
       } else {
         setError(data.error || "Failed to open billing portal");
       }
