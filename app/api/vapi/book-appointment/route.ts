@@ -80,7 +80,12 @@ export async function POST(request: NextRequest) {
     // the repair. Ignore any tech_id arg from Vapi/SMS — it's a known
     // hallucination source and was the suspected root cause of the Lori
     // Trapp glitch where booking failed against the wrong tech's capacity.
-    const techId = isRepair
+    // EXCEPTION: if the WO is marked Repair Follow-up but has no assigned
+    // tech (e.g. parts-arrival flow on a brand-new WO that was never
+    // diagnosed), fall back to the routed tech_id from the caller —
+    // otherwise the insert hits a NOT NULL violation and the customer is
+    // stuck in a "could not confirm that date" loop. (Rowland 2026-05-04)
+    const techId = isRepair && wo.assigned_technician_id
       ? wo.assigned_technician_id
       : (techIdArg ? parseInt(techIdArg) : wo.assigned_technician_id);
 
