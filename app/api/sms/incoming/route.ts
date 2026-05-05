@@ -23,6 +23,44 @@ const MONTH_NAMES = [
   "July","August","September","October","November","December",
 ];
 
+const DAY_NAMES = [
+  "Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday",
+];
+
+// Claude has been observed to ignore the "DO NOT recompute" rule and
+// label dates with the wrong day-of-week (e.g. "Monday, May 12" when
+// May 12 is a Tuesday). Customers then see contradictory info and lose
+// trust. This pass walks the AI reply, finds any "Weekday, Month Day"
+// sequences, computes the correct weekday for the calendar date, and
+// rewrites the label if it's wrong. Year is inferred from the current
+// CT date (rolling forward if the date has already passed this year).
+// Caught on Eluyn Gines 2026-05-04: "Monday, May 12" → should be Tuesday.
+function correctWeekdayLabels(text: string): string {
+  if (!text) return text;
+  const monthIdx: Record<string, number> = {};
+  MONTH_NAMES.forEach((m, i) => { monthIdx[m.toLowerCase()] = i; });
+  const todayCt = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) + "T12:00:00Z");
+  const currentYear = todayCt.getUTCFullYear();
+  const re = /\b(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday),?\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})\b/gi;
+  return text.replace(re, (match, weekday, month, day) => {
+    const m = monthIdx[month.toLowerCase()];
+    const d = parseInt(day, 10);
+    if (m == null || !d || d < 1 || d > 31) return match;
+    let year = currentYear;
+    let dt = new Date(Date.UTC(year, m, d, 12));
+    // If that date is already > 60 days in the past, assume next year.
+    if ((todayCt.getTime() - dt.getTime()) / 86400000 > 60) {
+      year += 1;
+      dt = new Date(Date.UTC(year, m, d, 12));
+    }
+    const correctWeekday = DAY_NAMES[dt.getUTCDay()];
+    if (correctWeekday.toLowerCase() === weekday.toLowerCase()) return match;
+    // Preserve original capitalization of the comma if present.
+    const hadComma = /,/.test(match);
+    return `${correctWeekday}${hadComma ? "," : ""} ${month} ${day}`;
+  });
+}
+
 // Single source of truth for fetching available slots. Built-in retry handles
 // transient blips (network, race with concurrent booking) — Bahram's bug
 // happened because the second slots fetch in a turn came back empty even
@@ -526,6 +564,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (twilioIntegration && replyText) {
+      replyText = correctWeekdayLabels(replyText);
       const creds = twilioIntegration.encrypted_keys as any;
       const statusCallback = `${APP_URL}/api/sms/status`;
       const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}/Messages.json`;
